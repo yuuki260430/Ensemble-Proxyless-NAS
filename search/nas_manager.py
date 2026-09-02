@@ -228,7 +228,9 @@ class ArchSearchRunManager:
         # remove unused modules
         self.net.unused_modules_off()
         # test on validation set under train mode
-        valid_res = self.run_manager.validate(is_test=False, use_train_mode=True, return_top5=True)
+        # CIFAR-10 does not need top-5 accuracy (only 10 classes)
+        return_top5 = self.run_manager.run_config.dataset != 'cifar10'
+        valid_res = self.run_manager.validate(is_test=False, use_train_mode=True, return_top5=return_top5)
         # flops of chosen network
         flops = self.run_manager.net_flops()
         # measure latencies of chosen op
@@ -304,9 +306,18 @@ class ArchSearchRunManager:
                                losses=losses, top1=top1, top5=top5, lr=warmup_lr)
                     self.run_manager.write_log(batch_log, 'train')
             valid_res, flops, latency = self.validate()
-            val_log = 'Warmup Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f}\ttop-5 acc {4:.3f}\t' \
-                      'Train top-1 {top1.avg:.3f}\ttop-5 {top5.avg:.3f}\tflops: {5:.1f}M'. \
-                format(epoch + 1, warmup_epochs, *valid_res, flops / 1e6, top1=top1, top5=top5)
+            # Handle dataset-specific unpacking (CIFAR-10: 2 values, ImageNet: 3 values)
+            if self.run_manager.run_config.dataset == 'cifar10':
+                val_loss, val_top1 = valid_res
+                val_top5 = 0  # Placeholder for logging
+                val_log = 'Warmup Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f}\t' \
+                          'Train top-1 {top1.avg:.3f}\tflops: {4:.1f}M'. \
+                    format(epoch + 1, warmup_epochs, val_loss, val_top1, flops / 1e6, top1=top1)
+            else:
+                val_loss, val_top1, val_top5 = valid_res
+                val_log = 'Warmup Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f}\ttop-5 acc {4:.3f}\t' \
+                          'Train top-1 {top1.avg:.3f}\ttop-5 {top5.avg:.3f}\tflops: {5:.1f}M'. \
+                    format(epoch + 1, warmup_epochs, val_loss, val_top1, val_top5, flops / 1e6, top1=top1, top5=top5)
             if self.arch_search_config.target_hardware not in [None, 'flops']:
                 val_log += '\t' + self.arch_search_config.target_hardware + ': %.3fms' % latency
             self.run_manager.write_log(val_log, 'valid')
@@ -432,15 +443,31 @@ class ArchSearchRunManager:
 
             # validate
             if (epoch + 1) % self.run_manager.run_config.validation_frequency == 0:
-                (val_loss, val_top1, val_top5), flops, latency = self.validate()
+                valid_res, flops, latency = self.validate()
+                # Handle dataset-specific unpacking (CIFAR-10: 2 values, ImageNet: 3 values)
+                if self.run_manager.run_config.dataset == 'cifar10':
+                    val_loss, val_top1 = valid_res
+                    val_top5 = 0  # Placeholder for logging
+                else:
+                    val_loss, val_top1, val_top5 = valid_res
                 self.run_manager.best_acc = max(self.run_manager.best_acc, val_top1)
-                val_log = 'Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f} ({4:.3f})\ttop-5 acc {5:.3f}\t' \
-                          'Train top-1 {top1.avg:.3f}\ttop-5 {top5.avg:.3f}\t' \
-                          'Entropy {entropy.val:.5f}\t' \
-                          'Latency-{6}: {7:.3f}ms\tFlops: {8:.2f}M'. \
-                    format(epoch + 1, self.run_manager.run_config.n_epochs, val_loss, val_top1,
-                           self.run_manager.best_acc, val_top5, self.arch_search_config.target_hardware,
-                           latency, flops / 1e6, entropy=entropy, top1=top1, top5=top5)
+                
+                if self.run_manager.run_config.dataset == 'cifar10':
+                    val_log = 'Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f} ({4:.3f})\t' \
+                              'Train top-1 {top1.avg:.3f}\t' \
+                              'Entropy {entropy.val:.5f}\t' \
+                              'Latency-{5}: {6:.3f}ms\tFlops: {7:.2f}M'. \
+                        format(epoch + 1, self.run_manager.run_config.n_epochs, val_loss, val_top1,
+                               self.run_manager.best_acc, self.arch_search_config.target_hardware,
+                               latency, flops / 1e6, entropy=entropy, top1=top1)
+                else:
+                    val_log = 'Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f} ({4:.3f})\ttop-5 acc {5:.3f}\t' \
+                              'Train top-1 {top1.avg:.3f}\ttop-5 {top5.avg:.3f}\t' \
+                              'Entropy {entropy.val:.5f}\t' \
+                              'Latency-{6}: {7:.3f}ms\tFlops: {8:.2f}M'. \
+                        format(epoch + 1, self.run_manager.run_config.n_epochs, val_loss, val_top1,
+                               self.run_manager.best_acc, val_top5, self.arch_search_config.target_hardware,
+                               latency, flops / 1e6, entropy=entropy, top1=top1, top5=top5)
                 self.run_manager.write_log(val_log, 'valid')
             # save model
             self.run_manager.save_model({

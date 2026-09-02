@@ -105,3 +105,14 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Datasets and data directories
+data/  # CIFAR-10 and other datasets (local)
+*.tar.gz
+*.zip
+
+# Experiment outputs and logs
+logs/
+Exp*/
+output/
+*.log

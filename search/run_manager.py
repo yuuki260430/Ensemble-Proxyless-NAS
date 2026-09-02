@@ -88,6 +88,9 @@ class RunConfig:
             if self.dataset == 'imagenet':
                 from data_providers.imagenet import ImagenetDataProvider
                 self._data_provider = ImagenetDataProvider(**self.data_config)
+            elif self.dataset == 'cifar10':
+                from data_providers.cifar10 import CIFAR10DataProvider
+                self._data_provider = CIFAR10DataProvider(**self.data_config)
             else:
                 raise ValueError('do not support: %s' % self.dataset)
         return self._data_provider
@@ -230,9 +233,15 @@ class RunManager:
             net = self.net.module
         else:
             net = self.net
+        
+        # Save current training state and set to eval mode to avoid BatchNorm issues with small batch size
+        was_training = net.training
+        net.eval()
         input_var = torch.zeros(data_shape, device=self.device)
         with torch.no_grad():
             flop, _ = net.get_flops(input_var)
+        if was_training:
+            net.train()  # Restore to training mode
         return flop
 
     # noinspection PyUnresolvedReferences
