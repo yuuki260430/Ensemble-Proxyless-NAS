@@ -12,7 +12,7 @@ from data_providers.base_provider import *
 class ImagenetDataProvider(DataProvider):
 
     def __init__(self, save_path=None, train_batch_size=256, test_batch_size=512, valid_size=None,
-                 n_worker=32, resize_scale=0.08, distort_color=None):
+                 n_worker=8, resize_scale=0.08, distort_color=None):
 
         self._save_path = save_path
         train_transforms = self.build_train_transform(distort_color, resize_scale)
@@ -78,7 +78,7 @@ class ImagenetDataProvider(DataProvider):
     @property
     def save_path(self):
         if self._save_path is None:
-            self._save_path = '/dataset/imagenet'
+            self._save_path = '/newssd/datasets/imagenet'
         return self._save_path
 
     @property

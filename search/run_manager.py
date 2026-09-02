@@ -333,7 +333,8 @@ class RunManager:
     def print_net_info(self, measure_latency=None):
         # network architecture
         if self.out_log:
-            print(self.net)
+            # print(self.net)  # Commented out: DataParallel output is too verbose
+            pass
 
         # parameters
         if isinstance(self.net, nn.DataParallel):
