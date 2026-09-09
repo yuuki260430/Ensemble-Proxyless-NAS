@@ -165,7 +165,7 @@ class RunConfig:
 
 class RunManager:
 
-    def __init__(self, path, net, run_config: RunConfig, out_log=True, measure_latency=None):
+    def __init__(self, path, net, run_config: RunConfig, out_log=True, measure_latency=None, latency_estimator_url=None):
         self.path = path
         self.net = net
         self.run_config = run_config
@@ -180,7 +180,11 @@ class RunManager:
 
         # a copy of net on cpu for latency estimation & mobile latency model
         self.net_on_cpu_for_latency = copy.deepcopy(self.net).cpu()
-        self.latency_estimator = LatencyEstimator()
+        # latency_estimator_urlでハードウェア別のYAMLを指定可能
+        if latency_estimator_url is not None:
+            self.latency_estimator = LatencyEstimator(url=latency_estimator_url)
+        else:
+            self.latency_estimator = LatencyEstimator()
 
         # move network to GPU if available
         if torch.cuda.is_available():

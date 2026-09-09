@@ -7,6 +7,7 @@ import argparse
 from models import ImagenetRunConfig
 from nas_manager import *
 from models.super_nets.super_proxyless import SuperProxylessNASNets
+from utils.config_loader import ConfigLoader
 
 # ref values
 ref_values = {
@@ -83,6 +84,7 @@ parser.add_argument('--arch_adam_beta2', type=float, default=0.999)  # arch_opt_
 parser.add_argument('--arch_adam_eps', type=float, default=1e-8)  # arch_opt_param
 parser.add_argument('--arch_weight_decay', type=float, default=0)
 parser.add_argument('--target_hardware', type=str, default=None, choices=['mobile', 'cpu', 'gpu8', 'flops', None])
+parser.add_argument('--hw-config', type=str, default=None, help='Hardware configuration YAML file path (e.g., configs/config_5080.yaml)')
 """ Grad hyper-parameters """
 parser.add_argument('--grad_update_arch_param_every', type=int, default=5)
 parser.add_argument('--grad_update_steps', type=int, default=1)
@@ -181,8 +183,18 @@ if __name__ == '__main__':
     for k, v in arch_search_config.config.items():
         print('\t%s: %s' % (k, v))
 
+    # Load hardware configuration if specified
+    latency_estimator_url = None
+    if args.hw_config:
+        config = ConfigLoader.load_config(args.hw_config)
+        latency_estimator_url = ConfigLoader.get_latency_model_url(config, args.target_hardware)
+        print(f"Hardware config loaded from {args.hw_config}")
+        if latency_estimator_url:
+            print(f"Latency model URL: {latency_estimator_url}")
+
     # arch search run manager
-    arch_search_run_manager = ArchSearchRunManager(args.path, super_net, run_config, arch_search_config)
+    arch_search_run_manager = ArchSearchRunManager(args.path, super_net, run_config, arch_search_config,
+                                                    latency_estimator_url=latency_estimator_url)
 
     # resume
     if args.resume:

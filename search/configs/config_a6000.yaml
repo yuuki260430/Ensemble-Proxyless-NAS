@@ -1,0 +1,32 @@
+# ProxylessNAS Hardware Configuration for NVIDIA A6000
+# A6000 GPU環境用のレイテンシモデル設定
+
+# ハードウェア情報
+hardware:
+  name: "NVIDIA A6000"
+  gpu_memory: 48  # GB
+  architecture: "Ampere"
+  compute_capability: "8.0"
+  max_power: 300  # W
+
+# モバイルデバイス用レイテンシモデルYAML
+# GitHubからダウンロード (オリジナルのURL)
+mobile_latency_model: "https://raw.githubusercontent.com/han-cai/files/master/proxylessnas/mobile_trim.yaml"
+
+# A6000 GPU環境用のカスタムレイテンシモデル
+# 必要に応じてA6000固有のYAMLファイルをここに指定
+gpu_a6000_latency_model: null
+
+# CPU用レイテンシモデル
+cpu_latency_model: null
+
+# その他のハードウェア
+gpu8_latency_model: null
+
+# キャッシュディレクトリ
+cache_dir: "~/.torch/proxyless_nas"
+overwrite_cache: false
+
+# その他の設定
+notes: "A6000 GPU用の設定ファイル。高メモリ環境向け。"
+

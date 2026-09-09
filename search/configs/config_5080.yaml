@@ -1,0 +1,32 @@
+# ProxylessNAS Hardware Configuration for NVIDIA RTX 5080
+# RTX 5080 GPU環境用のレイテンシモデル設定
+
+# ハードウェア情報
+hardware:
+  name: "NVIDIA RTX 5080"
+  gpu_memory: 14  # GB
+  architecture: "Blackwell"
+  compute_capability: "10.0"  # Expected for next-gen
+  max_power: 320  # W
+
+# モバイルデバイス用レイテンシモデルYAML
+# GitHubからダウンロード (オリジナルのURL)
+mobile_latency_model: "https://raw.githubusercontent.com/han-cai/files/master/proxylessnas/mobile_trim.yaml"
+
+# RTX 5080 GPU環境用のカスタムレイテンシモデル
+# 需要に応じてRTX 5080固有のYAMLファイルをここに指定
+gpu_rtx5080_latency_model: null
+
+# CPU用レイテンシモデル
+cpu_latency_model: null
+
+# その他のハードウェア
+gpu8_latency_model: null
+
+# キャッシュディレクトリ
+cache_dir: "~/.torch/proxyless_nas"
+overwrite_cache: false
+
+# その他の設定
+notes: "RTX 5080 GPU用の設定ファイル。メモリ容量がA6000より少ないため、バッチサイズなどの調整が必要な場合がある。"
+

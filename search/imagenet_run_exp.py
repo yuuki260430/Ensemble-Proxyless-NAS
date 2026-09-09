@@ -11,6 +11,7 @@ import torch
 
 from models import *
 from run_manager import RunManager
+from utils.config_loader import ConfigLoader
 
 
 parser = argparse.ArgumentParser()
@@ -21,6 +22,7 @@ parser.add_argument('--train', action='store_true')
 parser.add_argument('--manual_seed', default=0, type=int)
 parser.add_argument('--resume', action='store_true')
 parser.add_argument('--latency', type=str, default=None)
+parser.add_argument('--hw-config', type=str, default=None, help='Hardware configuration YAML file path (e.g., configs/config_5080.yaml)')
 
 parser.add_argument('--n_epochs', type=int, default=300)
 parser.add_argument('--init_lr', type=float, default=0.05)
@@ -112,8 +114,17 @@ if __name__ == '__main__':
         else:
             raise ValueError('do not support: %s' % args.net)
 
+    # Load hardware configuration if specified
+    latency_estimator_url = None
+    if args.hw_config:
+        config = ConfigLoader.load_config(args.hw_config)
+        latency_estimator_url = ConfigLoader.get_latency_model_url(config, None)
+        print(f"Hardware config loaded from {args.hw_config}")
+        if latency_estimator_url:
+            print(f"Latency model URL: {latency_estimator_url}")
+
     # build run manager
-    run_manager = RunManager(args.path, net, run_config, measure_latency=args.latency)
+    run_manager = RunManager(args.path, net, run_config, measure_latency=args.latency, latency_estimator_url=latency_estimator_url)
     run_manager.save_config(print_info=True)
 
     # load checkpoints

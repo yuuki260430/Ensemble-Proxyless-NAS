@@ -145,9 +145,9 @@ class RLArchSearchConfig(ArchSearchConfig):
 
 class ArchSearchRunManager:
 
-    def __init__(self, path, super_net, run_config: RunConfig, arch_search_config: ArchSearchConfig):
+    def __init__(self, path, super_net, run_config: RunConfig, arch_search_config: ArchSearchConfig, latency_estimator_url=None):
         # init weight parameters & build weight_optimizer
-        self.run_manager = RunManager(path, super_net, run_config, True)
+        self.run_manager = RunManager(path, super_net, run_config, True, latency_estimator_url=latency_estimator_url)
 
         self.arch_search_config = arch_search_config
 
