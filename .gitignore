@@ -116,3 +116,11 @@ logs/
 Exp*/
 output/
 *.log
+
+# Python 仮想環境フォルダ
+env5080/
+
+# （一般的な仮想環境名も合わせて指定しておくと安全です）
+venv/
+.venv/
+env/
