@@ -13,7 +13,7 @@ from utils import LatencyEstimator
 class SuperProxylessNASNets(ProxylessNASNets):
 
     def __init__(self, width_stages, n_cell_stages, conv_candidates, stride_stages,
-                 n_classes=1000, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0):
+                 n_classes=1000, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, first_stride=2):
         self._redundant_modules = None
         self._unused_modules = None
 
@@ -22,9 +22,9 @@ class SuperProxylessNASNets(ProxylessNASNets):
         for i in range(len(width_stages)):
             width_stages[i] = make_divisible(width_stages[i] * width_mult, 8)
 
-        # first conv layer
+        # first conv layer (stride 1 for small inputs such as CIFAR-10 32x32)
         first_conv = ConvLayer(
-            3, input_channel, kernel_size=3, stride=2, use_bn=True, act_func='relu6', ops_order='weight_bn_act'
+            3, input_channel, kernel_size=3, stride=first_stride, use_bn=True, act_func='relu6', ops_order='weight_bn_act'
         )
 
         # first block

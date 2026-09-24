@@ -79,7 +79,7 @@ parser.add_argument('--arch_init_type', type=str, default='normal', choices=['no
 parser.add_argument('--arch_init_ratio', type=float, default=1e-3)
 parser.add_argument('--arch_opt_type', type=str, default='adam', choices=['adam'])
 parser.add_argument('--arch_lr', type=float, default=1e-3)
-parser.add_argument('--arch_adam_beta1', type=float, default=0)  # arch_opt_param
+parser.add_argument('--arch_adam_beta1', type=float, default=0.0)  # arch_opt_param
 parser.add_argument('--arch_adam_beta2', type=float, default=0.999)  # arch_opt_param
 parser.add_argument('--arch_adam_eps', type=float, default=1e-8)  # arch_opt_param
 parser.add_argument('--arch_weight_decay', type=float, default=0)

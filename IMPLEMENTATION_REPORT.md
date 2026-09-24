@@ -121,7 +121,7 @@ pip install torchvision torch pyyaml
 
 ### メモリ不足エラー
 
-RTX 5080（メモリ14GB）ではA6000（メモリ48GB）より容量が少ないため、必要に応じてパラメータを調整してください：
+RTX 5080（メモリ16GB）ではA6000（メモリ48GB）より容量が少ないため、必要に応じてパラメータを調整してください：
 
 ```bash
 python search/cifar10_arch_search.py \\

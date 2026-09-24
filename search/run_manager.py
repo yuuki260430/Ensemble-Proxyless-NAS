@@ -263,6 +263,10 @@ class RunManager:
             net = self.net.module
 
         if l_type == 'mobile':
+            # the mobile latency lookup table only covers 224x224 ImageNet-shaped inputs
+            if data_shape[-1] != 224:
+                raise ValueError('mobile latency prediction requires 224x224 input, got %dx%d (%s)' %
+                                 (data_shape[-2], data_shape[-1], self.run_config.dataset))
             predicted_latency = 0
             try:
                 assert isinstance(net, ProxylessNASNets)

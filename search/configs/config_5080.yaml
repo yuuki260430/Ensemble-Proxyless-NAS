@@ -4,9 +4,9 @@
 # ハードウェア情報
 hardware:
   name: "NVIDIA RTX 5080"
-  gpu_memory: 14  # GB
+  gpu_memory: 16  # GB
   architecture: "Blackwell"
-  compute_capability: "10.0"  # Expected for next-gen
+  compute_capability: "12.0"  # sm_120 (requires PyTorch cu128 build)
   max_power: 320  # W
 
 # モバイルデバイス用レイテンシモデルYAML

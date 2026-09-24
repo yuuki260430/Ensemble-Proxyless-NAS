@@ -8,22 +8,19 @@ from nas_manager import *
 from models.super_nets.super_proxyless import SuperProxylessNASNets
 from utils.config_loader import ConfigLoader
 
-# ref values for CIFAR-10 (adjusted for smaller dataset)
+# ref values for CIFAR-10 (32x32 input, first_stride=1, stride_stages=1,2,2,1,2,1)
+# ImageNet ref FLOPs x 0.30: proxyless_mobile/gpu/cpu measured at 0.28-0.30x of their ImageNet FLOPs
+# under this CIFAR-10 configuration.
+# The mobile latency lookup table only covers 224x224 inputs, so only 'flops' is supported.
 ref_values = {
     'flops': {
-        '0.35': 59 * 1e6,
-        '0.50': 97 * 1e6,
-        '0.75': 209 * 1e6,
-        '1.00': 300 * 1e6,
-        '1.30': 509 * 1e6,
-        '1.40': 582 * 1e6,
+        '0.35': 18 * 1e6,
+        '0.50': 29 * 1e6,
+        '0.75': 63 * 1e6,
+        '1.00': 90 * 1e6,
+        '1.30': 153 * 1e6,
+        '1.40': 175 * 1e6,
     },
-    # ms
-    'mobile': {
-        '1.00': 80,
-    },
-    'cpu': {},
-    'gpu8': {},
 }
 
 parser = argparse.ArgumentParser()
@@ -63,7 +60,8 @@ parser.add_argument('--distort_color', type=str, default='normal', choices=['nor
 """ net config """
 parser.add_argument('--width_stages', type=str, default='24,40,80,96,192,320')
 parser.add_argument('--n_cell_stages', type=str, default='4,4,4,4,4,1')
-parser.add_argument('--stride_stages', type=str, default='2,2,2,1,2,1')
+parser.add_argument('--stride_stages', type=str, default='1,2,2,1,2,1')
+parser.add_argument('--first_stride', type=int, default=1)
 parser.add_argument('--width_mult', type=float, default=1.0)
 parser.add_argument('--bn_momentum', type=float, default=0.1)
 parser.add_argument('--bn_eps', type=float, default=1e-3)
@@ -78,11 +76,11 @@ parser.add_argument('--arch_init_type', type=str, default='normal', choices=['no
 parser.add_argument('--arch_init_ratio', type=float, default=1e-3)
 parser.add_argument('--arch_opt_type', type=str, default='adam', choices=['adam'])
 parser.add_argument('--arch_lr', type=float, default=1e-3)
-parser.add_argument('--arch_adam_beta1', type=float, default=0)  # arch_opt_param
+parser.add_argument('--arch_adam_beta1', type=float, default=0.0)  # arch_opt_param
 parser.add_argument('--arch_adam_beta2', type=float, default=0.999)  # arch_opt_param
 parser.add_argument('--arch_adam_eps', type=float, default=1e-8)  # arch_opt_param
 parser.add_argument('--arch_weight_decay', type=float, default=0)
-parser.add_argument('--target_hardware', type=str, default=None, choices=['mobile', 'cpu', 'gpu8', 'flops', None])
+parser.add_argument('--target_hardware', type=str, default=None, choices=['flops', None])
 parser.add_argument('--hw-config', type=str, default=None, help='Hardware configuration YAML file path (e.g., configs/config_5080.yaml)')
 """ Grad hyper-parameters """
 parser.add_argument('--grad_update_arch_param_every', type=int, default=5)
@@ -142,7 +140,7 @@ if __name__ == '__main__':
     super_net = SuperProxylessNASNets(
         width_stages=args.width_stages, n_cell_stages=args.n_cell_stages, stride_stages=args.stride_stages,
         conv_candidates=args.conv_candidates, n_classes=run_config.data_provider.n_classes, width_mult=args.width_mult,
-        bn_param=(args.bn_momentum, args.bn_eps), dropout_rate=args.dropout
+        bn_param=(args.bn_momentum, args.bn_eps), dropout_rate=args.dropout, first_stride=args.first_stride
     )
 
     # build arch search config from args
