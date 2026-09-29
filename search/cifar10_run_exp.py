@@ -158,3 +158,24 @@ if __name__ == '__main__':
         run_manager.save_model()
 
     output_dict = {}
+    # validate
+    if run_config.valid_size:
+        print('Test on validation set')
+        loss, acc1 = run_manager.validate(is_test=False, return_top5=False)
+        log = 'valid_loss: %f\t valid_acc1: %f' % (loss, acc1)
+        run_manager.write_log(log, prefix='valid')
+        output_dict = {
+            **output_dict,
+            'valid_loss': '%f' % loss, 'valid_acc1': '%f' % acc1, 'valid_size': run_config.valid_size
+        }
+
+    # test
+    print('Test on test set')
+    loss, acc1 = run_manager.validate(is_test=True, return_top5=False)
+    log = 'test_loss: %f\t test_acc1: %f' % (loss, acc1)
+    run_manager.write_log(log, prefix='test')
+    output_dict = {
+        **output_dict,
+        'test_loss': '%f' % loss, 'test_acc1': '%f' % acc1
+    }
+    json.dump(output_dict, open('%s/output' % args.path, 'w'), indent=4)
