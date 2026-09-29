@@ -12,6 +12,7 @@ import shutil
 import numpy as np
 import torch
 
+from data_providers.cifar10 import CIFAR10DataProvider
 from models.super_nets.super_proxyless import SuperProxylessNASNets
 from models.normal_nets.proxyless_nets import ProxylessNASNets
 from modules.mix_op import MixedEdge
@@ -32,6 +33,21 @@ parser.add_argument('--min_hamming', type=int, default=0,
                     help='minimum number of differing edges between any two selected archs (diversity)')
 parser.add_argument('--max_tries', type=int, default=10000)
 parser.add_argument('--manual_seed', type=int, default=0)
+
+""" selection among candidates """
+parser.add_argument('--select', type=str, default='order', choices=['order', 'dpp'],
+                    help='order: take the first n_archs valid candidates; '
+                         'dpp: collect pool_size candidates and pick n_archs by NEAS-style diversity score')
+parser.add_argument('--pool_size', type=int, default=30, help='[dpp] number of candidates to score')
+parser.add_argument('--dpp_beta', type=float, default=None,
+                    help='[dpp] similarity scale beta in exp(-beta * ||v_p - v_q||); default 1 / median distance')
+parser.add_argument('--dpp_gamma', type=float, default=1.0,
+                    help='[dpp] quality exponent (r ** gamma); larger favors accuracy over diversity')
+parser.add_argument('--bn_batches', type=int, default=20, help='[dpp] train batches for BN recalibration')
+parser.add_argument('--probe_size', type=int, default=2000, help='[dpp] train images for quality / features')
+parser.add_argument('--batch_size', type=int, default=250)
+parser.add_argument('--n_worker', type=int, default=4)
+parser.add_argument('--gpu', type=str, default='0')
 
 """ supernet config (must match the search) """
 parser.add_argument('--width_stages', type=str, default='24,40,80,96,192,320')
@@ -77,6 +93,103 @@ def net_flops(net):
     return flops
 
 
+def build_dpp_data(valid_size, args):
+    """ BN recalibration loader and a fixed probe set, both from the training split (not the valid split) """
+    provider = CIFAR10DataProvider(train_batch_size=args.batch_size, test_batch_size=args.batch_size,
+                                   valid_size=valid_size, n_worker=args.n_worker)
+    train_indexes = sorted(provider.train.sampler.indices)
+    probe_indexes = np.random.RandomState(args.manual_seed).choice(train_indexes, args.probe_size, replace=False)
+    # provider.valid.dataset is the CIFAR-10 train set with test-time transforms
+    probe_set = torch.utils.data.Subset(provider.valid.dataset, sorted(probe_indexes.tolist()))
+    probe_loader = torch.utils.data.DataLoader(probe_set, batch_size=args.batch_size, shuffle=False,
+                                               num_workers=args.n_worker, pin_memory=True)
+    probe_labels = torch.tensor(provider.valid.dataset.targets)[probe_set.indices]
+    return provider.train, probe_loader, probe_labels
+
+
+def recalibrate_bn(net, loader, n_batches, device):
+    """ supernet BN statistics are shared by all paths, so recompute them for each subnet """
+    for m in net.modules():
+        if isinstance(m, torch.nn.BatchNorm2d):
+            m.reset_running_stats()
+            m.momentum = None  # cumulative average
+    net.train()
+    with torch.no_grad():
+        for i, (images, _) in enumerate(loader):
+            if i >= n_batches:
+                break
+            net(images.to(device, non_blocking=True))
+
+
+def probe_features(net, loader, device):
+    """ pooled penultimate features and predictions on the probe set """
+    net.eval()
+    features, preds = [], []
+    with torch.no_grad():
+        for images, _ in loader:
+            x = net.first_conv(images.to(device, non_blocking=True))
+            for block in net.blocks:
+                x = block(x)
+            x = net.global_avg_pooling(net.feature_mix_layer(x)).flatten(1)
+            features.append(x)
+            preds.append(net.classifier(x).argmax(dim=1).cpu())
+    return torch.cat(features), torch.cat(preds)
+
+
+def dpp_select(pool, valid_size, args, force_first):
+    """
+    NEAS diversity score (Chen et al., CVPR 2021, Eq. 4, 5, 7, 8) applied to whole architectures:
+        r_p    = ACC_train'(p) ** gamma                           (quality)
+        S_pq   = E_n[ exp(-beta * ||v_p(n) - v_q(n)||_2) ]        (similarity of penultimate features)
+        L      = diag(r) S diag(r),  score(subset) = det(L_subset)
+    The subset of n_archs is chosen by greedy MAP inference.
+    NOTE: NEAS scores per-layer operator combinations to shrink the search space; here the same
+    kernel is used at the architecture level to reject redundant candidates before retraining.
+    """
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    bn_loader, probe_loader, probe_labels = build_dpp_data(valid_size, args)
+
+    quality, features = [], []
+    for idx, (arch, net, flops) in enumerate(pool):
+        net = copy.deepcopy(net).to(device)
+        recalibrate_bn(net, bn_loader, args.bn_batches, device)
+        feats, preds = probe_features(net, probe_loader, device)
+        quality.append((preds == probe_labels).float().mean().item())
+        features.append(feats)
+        print('\t[dpp] candidate %d/%d\tprobe acc %.2f\tFLOPs %.1fM' % (idx + 1, len(pool), quality[-1] * 100, flops))
+        del net
+
+    P = len(pool)
+    # per-sample feature distances ||v_p(n) - v_q(n)||_2 for every pair
+    pair_dist = {(p, q): (features[p] - features[q]).norm(dim=1) for p in range(P) for q in range(p + 1, P)}
+    beta = args.dpp_beta
+    if beta is None:
+        beta = 1.0 / torch.stack([d.mean() for d in pair_dist.values()]).median().clamp_min(1e-12).item()
+    sim = torch.eye(P, dtype=torch.float64)
+    for (p, q), d in pair_dist.items():
+        sim[p, q] = sim[q, p] = torch.exp(-beta * d).mean().item()
+    r = torch.tensor(quality, dtype=torch.float64).clamp_min(1e-6) ** args.dpp_gamma
+    kernel = r[:, None] * sim * r[None, :]
+
+    def log_det(indexes):
+        sign, value = torch.linalg.slogdet(kernel[indexes][:, indexes])
+        return value.item() if sign > 0 else -float('inf')
+
+    chosen = [0] if force_first else [int(torch.argmax(r))]
+    while len(chosen) < min(args.n_archs, P):
+        rest = [j for j in range(P) if j not in chosen]
+        gains = [log_det(chosen + [j]) for j in rest]
+        chosen.append(rest[int(np.argmax(gains))])
+
+    info = {
+        'beta': beta, 'gamma': args.dpp_gamma, 'pool_size': P,
+        'pool_quality': quality, 'pool_similarity': sim.tolist(),
+        'chosen_pool_indexes': chosen, 'log_det': log_det(chosen),
+    }
+    print('[dpp] beta %.4g\tchosen pool indexes %s\tlog det %.3f' % (beta, chosen, info['log_det']))
+    return [pool[i] + (quality[i],) for i in chosen], info
+
+
 def topk_archs(log_probs, k):
     """ exact top-k joint log-prob via beam search (edges are independent) """
     beams = [((), 0.0)]
@@ -88,6 +201,7 @@ def topk_archs(log_probs, k):
 
 if __name__ == '__main__':
     args = parser.parse_args()
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     np.random.seed(args.manual_seed)
 
     learned_net_path = os.path.join(args.search_path, 'learned_net')
@@ -109,11 +223,14 @@ if __name__ == '__main__':
     def arch_log_prob(arch):
         return float(sum(lp[i] for lp, i in zip(log_probs, arch)))
 
+    # number of valid candidates to collect before selection
+    target = args.pool_size if args.select == 'dpp' else args.n_archs
+
     # candidate generator
     if args.mode == 'topk':
         # over-generate so that FLOPs / diversity filtering still leaves enough archs
         constrained = args.min_flops is not None or args.max_flops is not None or args.min_hamming > 0
-        candidates = iter(topk_archs(log_probs, args.max_tries if constrained else args.n_archs))
+        candidates = iter(topk_archs(log_probs, args.max_tries if constrained else target))
     else:
         def sampler():
             for _ in range(args.max_tries):
@@ -130,7 +247,7 @@ if __name__ == '__main__':
 
     selected, seen = [], set()
     for arch in candidates:
-        if len(selected) >= args.n_archs:
+        if len(selected) >= target:
             break
         if arch in seen:
             continue
@@ -143,13 +260,21 @@ if __name__ == '__main__':
                 (args.max_flops is not None and flops > args.max_flops):
             continue
         selected.append((arch, net, flops))
-    if len(selected) < args.n_archs:
+    if len(selected) < target:
         print('Warning: only %d architectures satisfy the constraints' % len(selected))
+
+    dpp_info = None
+    if args.select == 'dpp':
+        run_config = json.load(open(os.path.join(learned_net_path, 'run.config')))
+        force_first = not args.no_argmax and len(selected) > 0 and selected[0][0] == argmax_arch
+        selected, dpp_info = dpp_select(selected, run_config['valid_size'], args, force_first)
+    else:
+        selected = [s_ + (None,) for s_ in selected]
 
     # export
     os.makedirs(args.out_path, exist_ok=True)
     summary = []
-    for idx, (arch, net, flops) in enumerate(selected):
+    for idx, (arch, net, flops, quality) in enumerate(selected):
         arch_dir = os.path.join(args.out_path, 'arch_%02d' % idx)
         os.makedirs(arch_dir, exist_ok=True)
         json.dump(net.config, open(os.path.join(arch_dir, 'net.config'), 'w'), indent=4)
@@ -163,17 +288,19 @@ if __name__ == '__main__':
             'params_M': round(count_parameters(net) / 1e6, 3),
             'hamming_to_argmax': int(sum(a != b for a, b in zip(arch, argmax_arch))),
         })
+        if quality is not None:
+            summary[-1]['probe_acc'] = quality
         print('%s\tlog_prob %.3f\tFLOPs %.1fM\tparams %.2fM\tdiff from argmax: %d edges' % (
             summary[-1]['name'], summary[-1]['log_prob'], flops, summary[-1]['params_M'],
             summary[-1]['hamming_to_argmax']))
 
-    archs = [a for a, _, _ in selected]
+    archs = [a[0] for a in selected]
     hamming = [[int(sum(x != y for x, y in zip(a, b))) for b in archs] for a in archs]
     entropy = float(sum(-(p * np.log(p)).sum() for p in probs))
     json.dump({
         'search_path': args.search_path, 'checkpoint': ckpt_path, 'mode': args.mode,
         'temperature': args.temperature, 'n_edges': len(edges), 'alpha_entropy': entropy,
-        'archs': summary, 'pairwise_hamming': hamming,
+        'select': args.select, 'archs': summary, 'pairwise_hamming': hamming, 'dpp': dpp_info,
     }, open(os.path.join(args.out_path, 'archs.json'), 'w'), indent=4)
     print('alpha entropy (sum over %d edges): %.3f' % (len(edges), entropy))
     print('Exported %d architectures to %s' % (len(selected), args.out_path))
