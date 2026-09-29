@@ -287,6 +287,9 @@ class ArchSearchRunManager:
                 top5.update(acc5[0], images.size(0))
                 # compute gradient and do SGD step
                 self.run_manager.net.zero_grad()  # zero grads of weight_param, arch_param & binary_param
+                # unused ops are detached from the net at this point, so net.zero_grad() does not reach them;
+                # clear their stale grads too, otherwise optimizer.step() re-applies them every step
+                self.run_manager.optimizer.zero_grad()
                 loss.backward()
                 self.run_manager.optimizer.step()  # update weight parameters
                 # unused modules back
@@ -394,6 +397,9 @@ class ArchSearchRunManager:
                     top5.update(acc5[0], images.size(0))
                     # compute gradient and do SGD step
                     self.run_manager.net.zero_grad()  # zero grads of weight_param, arch_param & binary_param
+                    # unused ops are detached from the net at this point, so net.zero_grad() does not reach them;
+                    # clear their stale grads too, otherwise optimizer.step() re-applies them every step
+                    self.run_manager.optimizer.zero_grad()
                     loss.backward()
                     self.run_manager.optimizer.step()  # update weight parameters
                     # unused modules back

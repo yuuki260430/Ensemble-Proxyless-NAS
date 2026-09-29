@@ -269,9 +269,12 @@ class ArchGradientFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         detached_x, output = ctx.saved_tensors
 
-        grad_x = torch.autograd.grad(output, detached_x, grad_output, only_inputs=True)
+        # torch.autograd.grad only returns the gradient w.r.t. detached_x and leaves the weights of the
+        # active op without gradients; backward() also accumulates them (same as torch.utils.checkpoint)
+        torch.autograd.backward(output, grad_output)
+        grad_x = detached_x.grad
         # compute gradients w.r.t. binary_gates
         binary_grads = ctx.backward_func(detached_x.data, output.data, grad_output.data)
 
-        return grad_x[0], binary_grads, None, None
+        return grad_x, binary_grads, None, None
 
