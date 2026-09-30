@@ -74,6 +74,7 @@ parser.add_argument('--dropout', type=float, default=0)
 """ arch search algo and warmup """
 parser.add_argument('--arch_algo', type=str, default='grad', choices=['grad', 'rl'])
 parser.add_argument('--warmup_epochs', type=int, default=40)
+parser.add_argument('--warmup_fair', action='store_true', help='FairNAS strict fairness during warmup')
 """ shared hyper-parameters """
 parser.add_argument('--arch_init_type', type=str, default='normal', choices=['normal', 'uniform'])
 parser.add_argument('--arch_init_ratio', type=float, default=1e-3)
@@ -215,7 +216,7 @@ if __name__ == '__main__':
 
     # warmup
     if arch_search_run_manager.warmup:
-        arch_search_run_manager.warm_up(warmup_epochs=args.warmup_epochs)
+        arch_search_run_manager.warm_up(warmup_epochs=args.warmup_epochs, fair=args.warmup_fair)
 
     # joint training
     arch_search_run_manager.train(fix_net_weights=args.debug)

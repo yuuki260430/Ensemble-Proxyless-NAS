@@ -244,7 +244,45 @@ class ArchSearchRunManager:
         self.net.unused_modules_back()
         return valid_res, flops, latency
 
-    def warm_up(self, warmup_epochs=25):
+    def fair_paths(self):
+        """
+        FairNAS strict fairness (Chu et al., ICCV 2021): m paths such that every candidate op of every
+        MixedEdge is used exactly once. Edges with fewer than m choices (e.g. 6 vs 7 when Zero is added)
+        are padded with randomly chosen ops.
+        """
+        edges = self.net.redundant_modules
+        m = max(e.n_choices for e in edges)
+        perms = []
+        for e in edges:
+            perm = list(np.random.permutation(e.n_choices))
+            perm += list(np.random.choice(e.n_choices, m - e.n_choices))
+            perms.append(perm)
+        return [[int(perm[k]) for perm in perms] for k in range(m)]
+
+    def average_fair_grads(self, paths):
+        """
+        Divide each accumulated gradient by the number of paths that used the parameter: shared layers
+        (stem, fixed block, head) are used by all m paths, candidate ops usually by one. Summing without
+        this makes the shared-layer gradient m times larger and the warmup diverges.
+        """
+        candidate_params = set()
+        for e_idx, e in enumerate(self.net.redundant_modules):
+            counts = np.bincount([path[e_idx] for path in paths], minlength=e.n_choices)
+            for op_idx, op in enumerate(e.candidate_ops):
+                for param in op.parameters():
+                    candidate_params.add(param)
+                    if param.grad is not None and counts[op_idx] > 1:
+                        param.grad.div_(counts[op_idx])
+        for param in self.net.weight_parameters():
+            if param not in candidate_params and param.grad is not None:
+                param.grad.div_(len(paths))
+
+    def set_path(self, path):
+        for e, idx in zip(self.net.redundant_modules, path):
+            e.active_index = [idx]
+            e.inactive_index = [_i for _i in range(e.n_choices) if _i != idx]
+
+    def warm_up(self, warmup_epochs=25, fair=False):
         lr_max = 0.05
         data_loader = self.run_manager.run_config.train_loader
         nBatch = len(data_loader)
@@ -269,31 +307,38 @@ class ArchSearchRunManager:
                 for param_group in self.run_manager.optimizer.param_groups:
                     param_group['lr'] = warmup_lr
                 images, labels = images.to(self.run_manager.device), labels.to(self.run_manager.device)
-                # compute output
-                self.net.reset_binary_gates()  # random sample binary gates
-                self.net.unused_modules_off()  # remove unused module for speedup
-                output = self.run_manager.net(images)  # forward (DataParallel)
-                # loss
-                if self.run_manager.run_config.label_smoothing > 0:
-                    loss = cross_entropy_with_label_smoothing(
-                        output, labels, self.run_manager.run_config.label_smoothing
-                    )
-                else:
-                    loss = self.run_manager.criterion(output, labels)
-                # measure accuracy and record loss
-                acc1, acc5 = accuracy(output, labels, topk=(1, 5))
-                losses.update(loss, images.size(0))
-                top1.update(acc1[0], images.size(0))
-                top5.update(acc5[0], images.size(0))
-                # compute gradient and do SGD step
+                # zero all grads before any op is detached by unused_modules_off()
                 self.run_manager.net.zero_grad()  # zero grads of weight_param, arch_param & binary_param
-                # unused ops are detached from the net at this point, so net.zero_grad() does not reach them;
-                # clear their stale grads too, otherwise optimizer.step() re-applies them every step
                 self.run_manager.optimizer.zero_grad()
-                loss.backward()
+                # fair: accumulate grads over m paths covering every candidate op once, then update once
+                paths = self.fair_paths() if fair else [None]
+                for path in paths:
+                    # compute output
+                    if path is None:
+                        self.net.reset_binary_gates()  # random sample binary gates
+                    else:
+                        self.set_path(path)
+                    self.net.unused_modules_off()  # remove unused module for speedup
+                    output = self.run_manager.net(images)  # forward (DataParallel)
+                    # loss
+                    if self.run_manager.run_config.label_smoothing > 0:
+                        loss = cross_entropy_with_label_smoothing(
+                            output, labels, self.run_manager.run_config.label_smoothing
+                        )
+                    else:
+                        loss = self.run_manager.criterion(output, labels)
+                    # measure accuracy and record loss
+                    acc1, acc5 = accuracy(output, labels, topk=(1, 5))
+                    losses.update(loss.item(), images.size(0))
+                    top1.update(acc1[0], images.size(0))
+                    top5.update(acc5[0], images.size(0))
+                    # accumulate gradient over paths
+                    loss.backward()
+                    # unused modules back
+                    self.net.unused_modules_back()
+                if fair:
+                    self.average_fair_grads(paths)
                 self.run_manager.optimizer.step()  # update weight parameters
-                # unused modules back
-                self.net.unused_modules_back()
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
