@@ -82,6 +82,8 @@ parser.add_argument('--arch_adam_beta2', type=float, default=0.999)  # arch_opt_
 parser.add_argument('--arch_adam_eps', type=float, default=1e-8)  # arch_opt_param
 parser.add_argument('--arch_weight_decay', type=float, default=0)
 parser.add_argument('--target_hardware', type=str, default=None, choices=['flops', None])
+parser.add_argument('--flops_target', type=float, default=None,
+                    help='[flops] target MFLOPs for the regularization loss (default: ref_values table)')
 parser.add_argument('--hw-config', type=str, default=None, help='Hardware configuration YAML file path (e.g., configs/config_5080.yaml)')
 """ Grad hyper-parameters """
 parser.add_argument('--grad_update_arch_param_every', type=int, default=5)
@@ -154,6 +156,8 @@ if __name__ == '__main__':
         args.arch_opt_param = None
     if args.target_hardware is None:
         args.ref_value = None
+    elif args.target_hardware == 'flops' and args.flops_target is not None:
+        args.ref_value = args.flops_target * 1e6
     else:
         args.ref_value = ref_values[args.target_hardware]['%.2f' % args.width_mult]
     if args.arch_algo == 'grad':
