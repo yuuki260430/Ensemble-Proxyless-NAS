@@ -1,0 +1,25 @@
+[project]
+name = "proxylessnas-cifar10"
+version = "0.1.0"
+description = "ProxylessNAS search on CIFAR-10 and ensemble selection"
+requires-python = "==3.12.*"
+dependencies = [
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "numpy",
+    "pyyaml",
+]
+
+[tool.uv]
+# scripts only, not an installable package
+package = false
+
+# RTX 5080 (sm_120) needs a CUDA 12.8+ build of PyTorch
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
