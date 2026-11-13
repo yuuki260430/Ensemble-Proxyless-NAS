@@ -13,7 +13,9 @@ from utils import LatencyEstimator
 class SuperProxylessNASNets(ProxylessNASNets):
 
     def __init__(self, width_stages, n_cell_stages, conv_candidates, stride_stages,
-                 n_classes=1000, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, first_stride=2):
+                 n_classes=1000, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, first_stride=2,
+                 allow_zero=True):
+        # allow_zero=False: no 'Zero' (block skipping) candidate, e.g. the FairNAS search space (6 ops per layer)
         self._redundant_modules = None
         self._unused_modules = None
 
@@ -46,7 +48,7 @@ class SuperProxylessNASNets(ProxylessNASNets):
                 else:
                     stride = 1
                 # conv
-                if stride == 1 and input_channel == width:
+                if allow_zero and stride == 1 and input_channel == width:
                     modified_conv_candidates = conv_candidates + ['Zero']
                 else:
                     modified_conv_candidates = conv_candidates

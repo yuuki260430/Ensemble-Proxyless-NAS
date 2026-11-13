@@ -19,7 +19,14 @@ from modules.mix_op import MixedEdge
 from utils import count_parameters
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--search_path', type=str, required=True, help='output dir of cifar10_arch_search.py')
+parser.add_argument('--search_path', type=str, default=None, help='output dir of cifar10_arch_search.py')
+parser.add_argument('--candidates', type=str, default=None,
+                    help='FairNAS baseline: candidates.json of cifar10_fairnas_evo.py, used instead of alpha '
+                         '(the supernet settings are read from <supernet_path>/supernet.config)')
+parser.add_argument('--candidate_set', type=str, default='final_population',
+                    choices=['final_population', 'pareto_front'], help='[candidates] which set forms the pool')
+parser.add_argument('--run_config', type=str, default=None,
+                    help='[candidates] run.config for retraining (default for --search_path: learned_net/run.config)')
 parser.add_argument('--checkpoint', type=str, default=None, help='default: <search_path>/checkpoint/checkpoint.pth.tar')
 parser.add_argument('--out_path', type=str, required=True)
 parser.add_argument('--n_archs', type=int, default=5)
@@ -35,9 +42,13 @@ parser.add_argument('--max_tries', type=int, default=10000)
 parser.add_argument('--manual_seed', type=int, default=0)
 
 """ selection among candidates """
-parser.add_argument('--select', type=str, default='order', choices=['order', 'dpp'],
+parser.add_argument('--select', type=str, default='order', choices=['order', 'dpp', 'even'],
                     help='order: take the first n_archs valid candidates; '
-                         'dpp: collect pool_size candidates and pick n_archs by NEAS-style diversity score')
+                         'dpp: collect pool_size candidates and pick n_archs by NEAS-style diversity score; '
+                         'even: [candidates] n_archs evenly spaced by MACs (FairNAS baseline within the same pool)')
+parser.add_argument('--save_init', action='store_true',
+                    help='[candidates] also write the inherited supernet weights as arch_XX/init (fine-tuning); '
+                         'by default no init is written, so retraining starts from scratch')
 parser.add_argument('--pool_size', type=int, default=30, help='[dpp] number of candidates to score')
 parser.add_argument('--dpp_beta', type=float, default=None,
                     help='[dpp] similarity scale beta in exp(-beta * ||v_p - v_q||); default 1 / median distance')
@@ -73,6 +84,7 @@ def build_super_net(args):
         stride_stages=[int(v) for v in args.stride_stages.split(',')],
         conv_candidates=CONV_CANDIDATES, n_classes=10, width_mult=args.width_mult,
         bn_param=(args.bn_momentum, args.bn_eps), dropout_rate=args.dropout, first_stride=args.first_stride,
+        allow_zero=getattr(args, 'allow_zero', True),
     )
 
 
@@ -199,10 +211,89 @@ def topk_archs(log_probs, k):
     return [arch for arch, _ in beams]
 
 
+def export(selected, out_path, run_config_path, info, save_init=True):
+    """ write arch_XX/{net.config, run.config, init} and archs.json; selected = [(arch, net, flops, quality, extra)] """
+    os.makedirs(out_path, exist_ok=True)
+    summary = []
+    for idx, (arch, net, flops, quality, extra) in enumerate(selected):
+        arch_dir = os.path.join(out_path, 'arch_%02d' % idx)
+        os.makedirs(arch_dir, exist_ok=True)
+        json.dump(net.config, open(os.path.join(arch_dir, 'net.config'), 'w'), indent=4)
+        shutil.copy(run_config_path, os.path.join(arch_dir, 'run.config'))
+        if save_init:
+            torch.save({'state_dict': net.state_dict(), 'dataset': 'cifar10'}, os.path.join(arch_dir, 'init'))
+        summary.append(dict(name='arch_%02d' % idx, arch=list(arch), flops_M=round(flops, 2),
+                            params_M=round(count_parameters(net) / 1e6, 3), **extra))
+        if quality is not None:
+            summary[-1]['probe_acc'] = quality
+        print('%s\tFLOPs %.1fM\tparams %.2fM\t%s' % (summary[-1]['name'], flops, summary[-1]['params_M'], extra))
+    archs = [s_[0] for s_ in selected]
+    hamming = [[int(sum(x != y for x, y in zip(a, b))) for b in archs] for a in archs]
+    json.dump(dict(info, archs=summary, pairwise_hamming=hamming), open(os.path.join(out_path, 'archs.json'), 'w'),
+              indent=4)
+    print('Exported %d architectures to %s' % (len(selected), out_path))
+
+
+def main_candidates(args):
+    """ FairNAS baseline: pool = population / Pareto front of the evolutionary search (no alpha) """
+    cand = json.load(open(args.candidates))
+    cfg = json.load(open(os.path.join(cand['supernet_path'], 'supernet.config')))
+    for key in ['width_stages', 'n_cell_stages', 'stride_stages', 'first_stride', 'width_mult',
+                'bn_momentum', 'bn_eps', 'allow_zero']:
+        setattr(args, key, cfg[key])
+    if args.dropout is None:
+        # same classifier dropout as the Pareto-front export of cifar10_fairnas_evo.py (supernet itself uses 0)
+        evo_dropout = cand['args'].get('dropout')
+        args.dropout = evo_dropout if evo_dropout is not None else cfg['dropout']
+    assert list(cfg['conv_candidates']) == CONV_CANDIDATES
+    assert args.run_config is not None, '--run_config is required with --candidates'
+    ckpt_path = args.checkpoint or cand['checkpoint']
+
+    super_net = build_super_net(args)
+    model_dict = super_net.state_dict()
+    model_dict.update(torch.load(ckpt_path, map_location='cpu')['state_dict'])
+    super_net.load_state_dict(model_dict)
+    print('Loaded supernet from %s' % ckpt_path)
+
+    pool = []
+    for c in cand[args.candidate_set]:
+        if (args.min_flops is not None and c['flops_M'] < args.min_flops) or \
+                (args.max_flops is not None and c['flops_M'] > args.max_flops):
+            continue
+        arch = tuple(c['arch'])
+        pool.append((arch, to_normal_net(super_net, arch), net_flops(to_normal_net(super_net, arch)) / 1e6,
+                     {'supernet_acc': c['supernet_acc']}))
+    print('%d candidates in the pool (%s)' % (len(pool), args.candidate_set))
+
+    dpp_info = None
+    if args.select == 'dpp':
+        valid_size = json.load(open(args.run_config))['valid_size']
+        chosen, dpp_info = dpp_select([p[:3] for p in pool], valid_size, args, force_first=False)
+        extra = {p[0]: p[3] for p in pool}
+        selected = [(a, n, f, q, extra[a]) for a, n, f, q in chosen]
+    elif args.select == 'even':
+        # same rule as the Pareto export of cifar10_fairnas_evo.py, restricted to the filtered pool
+        by_flops = sorted(pool, key=lambda p: p[2])
+        K = min(args.n_archs, len(by_flops))
+        selected = [(a, n, f, None, e) for a, n, f, e in
+                    [by_flops[int(round(i))] for i in np.linspace(0, len(by_flops) - 1, K)]]
+    else:
+        selected = [(a, n, f, None, e) for a, n, f, e in pool[:args.n_archs]]
+    export(selected, args.out_path, args.run_config, {
+        'candidates': args.candidates, 'candidate_set': args.candidate_set, 'checkpoint': ckpt_path,
+        'select': args.select, 'min_flops': args.min_flops, 'max_flops': args.max_flops, 'dropout': args.dropout,
+        'pool_size': len(pool), 'dpp': dpp_info,
+    }, save_init=args.save_init)
+
+
 if __name__ == '__main__':
     args = parser.parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     np.random.seed(args.manual_seed)
+    if args.candidates is not None:
+        main_candidates(args)
+        raise SystemExit
+    assert args.search_path is not None, '--search_path or --candidates is required'
 
     learned_net_path = os.path.join(args.search_path, 'learned_net')
     if args.dropout is None:

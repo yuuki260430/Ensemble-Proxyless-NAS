@@ -1,6 +1,6 @@
 # CIFAR-10 化とアンサンブル探索：作業記録と論文用メモ
 
-最終更新: 2026-10-08
+最終更新: 2026-11-09
 
 ProxylessNAS を CIFAR-10 / RTX 5080 で動かすための変更、アンサンブル用に追加した機能、supernet 学習の調査と改善、実験結果、論文に書くべき引用と手法上の注意点をまとめたもの。
 
@@ -374,6 +374,95 @@ FairNAS [15] の strict fairness を参考に、1 回の更新ごとに、各層
 **予稿の考察の文案**
 
 > 本実験では，構造の異なる構成モデルを選択しても，同一構造を乱数種のみ変えたアンサンブルと比べて予測の多様性は向上しなかった．選択された構造はブロック単位では平均 11.7 ブロック異なっていたことから，構造上の差異が機能上の差異に結びついていない可能性がある．その要因として，(1) supernet の重み共有により特定の演算が優遇され，候補の生成と評価の双方が supernet に依存すること，(2) 探索空間の骨格（ステージ構成やチャネル幅）が固定されていること，が考えられる．なお，FLOPs 正則化の強さを変えると同一の supernet から規模の大きく異なる構造が得られたことから，supernet が類似した構造しか生み出せないわけではない．今後，探索空間からの一様ランダムな選択との比較や，規模の異なる構造を組み合わせたアンサンブルにより，これらの要因を切り分ける．
+
+### 6.5 FairNAS ベースライン（2026-11-09 開始、`Exp5/`）
+
+**動機**：ProxylessNAS の探索フェーズでは、重みの学習に使う経路を softmax(α) からサンプリングする（[nas_manager.py](nas_manager.py) の `train()` → `reset_binary_gates()`）。α の大きい演算ほど多く学習され、その結果さらに α が大きくなる（rich-get-richer）。fair ウォームアップで公平に始めても、探索の 150 エポックで偏りが積み重なる。さらに候補の生成（topk / sample）も α に依存する。これが似た構造ばかりになる原因（6.4 の (b)）と考え、ベースラインを FairNAS に切り替える。比較のため、設定は本家にできるだけ合わせる。
+
+**本家の設定（論文本文で確認）と本実装**
+
+| 項目 | FairNAS [15] | 本実装 |
+|---|---|---|
+| supernet 学習 | Algorithm 1（strict fairness）、150 エポック、batch 256、SGD momentum 0.9、lr 0.045 から cosine、wd 4e-5 | 同じ（[cifar10_fairnas_supernet.py](cifar10_fairnas_supernet.py)）。nesterov なし、label smoothing なし、dropout 0 |
+| 勾配の扱い | m 本の経路の勾配を**和**で貯める | **使用回数で割る（平均）**。和では lr 0.045 で 10 ステップ目に損失 26.5 まで発散し、1 エポック目は精度 10% のまま（`Exp5/sum_grad_lr0.045_divergence.log`）。7.1 に変更点として書く |
+| 探索空間 | ProxylessNAS と同じ層構成で各層 6 候補（Zero なし） | **Zero あり（従来と同じ空間）と Zero なし（本家と同じ）の両方**。候補数が層で違う場合は付録 A.1 の方法（足りない分をランダムに補う） |
+| 探索 | NSGA-II（MoreMNAS 型）、目的は精度・積和演算数・パラメータ数、N = 64、200 世代（12,800 モデル） | 同じ（[cifar10_fairnas_evo.py](cifar10_fairnas_evo.py)）。変異は**ランダム変異のみ**（PPO による強化変異 0.65 と prior regulator 0.15 は未実装。公式の探索コードは非公開）。変異率 0.8 は「子の 8 割を変異、2 割を 1 点交叉で作る」と解釈した |
+| 評価データ | 学習データから 1 クラス 50 枚を抜いた検証用データ | 従来と同じ固定 5,000 枚の検証分割 |
+| 継承重みでの評価 | BN 再計算の有無で順位は同じ（Table 6） | 学習データの固定 5,000 枚で BN を再計算してから評価 |
+| 出力 | 最終集団 P_{G+1} のパレート前線から等間隔に K 個 | 同じ（積和演算数の順に等間隔、`pareto/arch_XX`、スクラッチ学習用に `init` なし） |
+
+**提案手法との接続**：DPP の候補プールを α からのサンプリングではなく、進化探索の最終集団（またはパレート前線）にする。`cifar10_derive_archs.py --candidates <candidates.json>` で実行する。品質 r と類似度 S の計算は従来と同じ。
+
+**その他のコード変更**
+- `SuperProxylessNASNets(allow_zero=False)` で Zero なしの探索空間を作れるようにした
+- `warm_up()` に `lr_max` と `fair_grad`（`sum` / `mean`）を追加した
+- `warm_up()` の再開のバグを修正した。`warmup_epoch` がタプル `(epoch,)` で保存され、再開すると失敗していた。また同じエポックをやり直していた。あわせて最適化器の状態も保存するようにした
+
+**実行状況**
+- supernet：`Exp5/supernet_queue.sh` で Zero あり → Zero なしの順に学習（1 エポック約 85 秒、1 本約 3.6 時間）。11-09 07:41 開始。Zero ありは 20 エポックで検証 60.2%
+- NSGA-II：GPU を学習と共有した状態で 1 構造あたり約 2.4 秒。12,800 構造で数時間の見込み
+
+**段階 1 の結果（11-09 07:41〜13:54）**
+
+| | Zero あり（`Exp5/fairnas_zero`） | Zero なし（`Exp5/fairnas_nozero`） |
+|---|---|---|
+| 所要時間 | 3 時間 11 分 | 3 時間 3 分 |
+| 検証 top-1（監視用の固定 1 構造、最終） | 83.16% | 84.40% |
+| 学習 top-1（7 経路の平均、最終） | 90.93% | 91.35% |
+
+- 検証の値は、`validate()` が使う「初期値の α の argmax」で決まる任意の 1 構造の精度。ProxylessNAS の探索終了時の 82.1%（5.4）とは構造が違うので、直接は比べられない
+- 100 エポック以降は検証精度がほぼ横ばいで、学習精度との差は約 8 ポイント
+
+**偏りの確認（`Exp5/bias_check/`）**：同じランダム構造 128 個（NSGA-II の初期集団）を、3 つの supernet で同じ方法（BN 再計算 → 検証 5,000 枚）で評価した
+
+| supernet | ランダム構造 平均 ± 標準偏差（最小〜最大） | すべて 7x7_MBConv6 | ProxylessNAS の argmax 構造 | 精度と MACs の順位相関 |
+|---|---|---|---|---|
+| fair ウォームアップ 70 エポック（`Exp3/fair70_search` の warmup） | 76.27 ± 0.74（74.32〜77.58） | 77.50 | − | 0.43 |
+| 上記 ＋ ProxylessNAS 探索 150 エポック | 80.53 ± 1.43（77.42〜84.32） | 86.50 | **86.66** | 0.51 |
+| FairNAS 150 エポック（Zero あり） | 87.35 ± 0.54（85.94〜88.54） | 88.26 | 88.50 | 0.52 |
+
+- ProxylessNAS の探索フェーズの後、α が選んだ構造は 86.66% で、ランダム構造の平均を 6.1 ポイント（標準偏差の約 4 倍）上回り、ランダム構造の最大値（84.32%）も超えた。FairNAS では同じ構造の差は 1.15 ポイントで、ウォームアップ直後の差（7x7_MBConv6 構造で 1.2 ポイント）と同程度
+- → ProxylessNAS で選ばれた構造の優位の大部分は、探索フェーズ中に**その構造の演算だけが多く学習されたことによる**と考えられる（rich-get-richer の直接の証拠）。ただし学習率などの設定も違うため、ここでの差は相関であり、スタンドアロン学習での確認が必要
+- FairNAS ではランダム構造の精度の幅が狭い（標準偏差 0.54）。FairNAS 論文 6.1 節と同じ傾向。DPP の品質 r の差も小さくなるので、選択は多様性の項に強く左右される
+- 3 つの supernet の間で、同じ 128 構造の順位はあまり一致しない（Kendall τ = 0.43〜0.58）。どの順位が正しいかは、スタンドアロン学習の精度と比べないと分からない
+- どの supernet でも、大きい構造ほど精度が高い傾向（順位相関 0.4〜0.5）は残る
+
+**段階 2（11-10 04:29〜08:04、`Exp5/evo_queue.sh`）**：1 世代約 20〜35 秒。200 世代完了
+
+| | Zero あり（`Exp5/evo_zero`） | Zero なし（`Exp5/evo_nozero`） |
+|---|---|---|
+| 所要時間 | 1 時間 38 分 | 1 時間 57 分 |
+| 評価した構造（重複なし） | 11,962 | 11,381 |
+| パレート前線 | 64 個（最終集団すべて）、MACs 25.6〜109.8M | 64 個、MACs 76.2〜120.4M |
+| supernet 精度の最高（1 → 200 世代） | 88.58 → 89.60% | 88.42 → 89.28% |
+| 取り出した 5 個の精度 / MACs | 66.28/25.6、80.56/35.1、86.74/54.3、88.82/77.3、89.60/109.8 | 83.08/76.2、86.74/81.1、88.12/92.2、88.94/102.8、89.28/120.4 |
+
+- Zero ありの `arch_00` は省略可能な 15 ブロックがすべて Zero、残りも 3x3_MBConv3 の最小構造
+- MACs 約 80M 以上で supernet 精度が 89.0〜89.6% に頭打ち。CIFAR-10 の易しさか、共有重みで差が縮んでいるのかは再学習で切り分ける
+- 進捗報告：[PROGRESS_REPORT_20261110.md](PROGRESS_REPORT_20261110.md)
+
+**DPP の準備（11-13）**
+- **バグ修正**：`cifar10_fairnas_evo.py` の BN 再計算で `momentum = None`（累積平均）にしたまま `pareto/arch_XX/net.config` を書き出していた（`"bn": {"momentum": null}`）。このまま再学習すると、BN の統計が学習全体の累積平均になる。書き出しの前に supernet の設定値（0.1）へ戻すよう修正し、既存の 10 個の `net.config` の momentum を 0.1 に書き換えた（再学習の前なので結果への影響はない）。`cifar10_derive_archs.py` は deepcopy してから再計算するので影響なし
+- **MACs の下限 76M**：Zero なしのパレート前線の最小値（76.18M）に合わせ、両方の探索空間で候補を 76M 以上にする。ねらいは (1) Zero ありの極端に小さい構造（25.6M、supernet 精度 66%）を除くこと、(2) 2 つの探索空間の MACs の範囲をそろえること。76.2 にすると Zero なしの最小構造（76.18M）が外れるので 76 とした。候補の数は Zero あり 18 個（76.5〜109.8M）、Zero なし 64 個
+- **ベースラインも同じ範囲から取る**：`--select even` で、下限を付けたパレート前線から MACs 順に等間隔で K 個取る（`cifar10_fairnas_evo.py` の書き出しと同じ規則）。Zero なしは既存の `pareto/` と 5 個とも一致する。Zero ありは `pareto/`（25.6M〜）と異なり、76.5〜109.8M の 5 個になる
+- `--candidates` のときは `init` を書き出さない（スクラッチ学習。継承重みが必要なら `--save_init`）。dropout は既定で進化探索の書き出しと同じ値（0.3）を使う
+
+```bash
+cd search
+# 段階 1（Zero なしは --no_zero を付ける）
+uv run python cifar10_fairnas_supernet.py --path ../Exp5/fairnas_zero --gpu 0 --fair_grad mean
+# 段階 2：NSGA-II とパレート前線からの K 個（比較のため run.config と dropout は従来のベースラインに合わせる）
+uv run python cifar10_fairnas_evo.py --supernet_path ../Exp5/fairnas_zero --out_path ../Exp5/evo_zero \
+  --run_config ../Exp3/fair70_search/learned_net/run.config --dropout 0.3 --n_archs 5
+# ベースライン（下限付き）：パレート前線の 76M 以上から MACs 順に等間隔で K 個
+uv run python cifar10_derive_archs.py --candidates ../Exp5/evo_zero/candidates.json --candidate_set pareto_front \
+  --run_config ../Exp3/fair70_search/learned_net/run.config --min_flops 76 \
+  --out_path ../Exp5/evo_zero/even5_min76 --n_archs 5 --select even
+# 提案手法：同じ候補から DPP で選ぶ（init は書き出さない＝スクラッチ学習）
+uv run python cifar10_derive_archs.py --candidates ../Exp5/evo_zero/candidates.json --candidate_set pareto_front \
+  --run_config ../Exp3/fair70_search/learned_net/run.config --min_flops 76 \
+  --out_path ../Exp5/evo_zero/dpp5_min76 --n_archs 5 --select dpp
+```
 
 ## 7. 論文に書くべき点
 

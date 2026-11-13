@@ -282,8 +282,13 @@ class ArchSearchRunManager:
             e.active_index = [idx]
             e.inactive_index = [_i for _i in range(e.n_choices) if _i != idx]
 
-    def warm_up(self, warmup_epochs=25, fair=False):
-        lr_max = 0.05
+    def warm_up(self, warmup_epochs=25, fair=False, lr_max=0.05, fair_grad='mean'):
+        """
+        fair_grad (only with fair=True):
+            'sum'  : accumulate the m path gradients as is (FairNAS Algorithm 1)
+            'mean' : divide each gradient by the number of paths that used the parameter (average_fair_grads)
+        """
+        assert fair_grad in ['sum', 'mean']
         data_loader = self.run_manager.run_config.train_loader
         nBatch = len(data_loader)
         T_total = warmup_epochs * nBatch
@@ -336,7 +341,7 @@ class ArchSearchRunManager:
                     loss.backward()
                     # unused modules back
                     self.net.unused_modules_back()
-                if fair:
+                if fair and fair_grad == 'mean':
                     self.average_fair_grads(paths)
                 self.run_manager.optimizer.step()  # update weight parameters
                 # measure elapsed time
@@ -379,9 +384,11 @@ class ArchSearchRunManager:
             checkpoint = {
                 'state_dict': state_dict,
                 'warmup': self.warmup,
+                'weight_optimizer': self.run_manager.optimizer.state_dict(),
             }
             if self.warmup:
-                checkpoint['warmup_epoch'] = epoch,
+                # next epoch to run on resume (was saved as the tuple `(epoch,)`, which broke resuming)
+                checkpoint['warmup_epoch'] = epoch + 1
             self.run_manager.save_model(checkpoint, model_name='warmup.pth.tar')
 
     def train(self, fix_net_weights=False):
