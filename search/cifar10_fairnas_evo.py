@@ -25,7 +25,7 @@ import time
 import numpy as np
 import torch
 
-from data_providers.cifar10 import CIFAR10DataProvider
+from data_providers.cifar10 import get_cifar_provider
 from models.super_nets.super_proxyless import SuperProxylessNASNets
 from models.normal_nets.proxyless_nets import ProxylessNASNets
 from modules.mix_op import MixedEdge
@@ -66,7 +66,8 @@ def build_super_net(cfg):
         width_stages=[int(v) for v in cfg['width_stages'].split(',')],
         n_cell_stages=[int(v) for v in cfg['n_cell_stages'].split(',')],
         stride_stages=[int(v) for v in cfg['stride_stages'].split(',')],
-        conv_candidates=list(cfg['conv_candidates']), n_classes=10, width_mult=cfg['width_mult'],
+        conv_candidates=list(cfg['conv_candidates']),
+        n_classes=get_cifar_provider(cfg.get('dataset', 'cifar10')).N_CLASSES, width_mult=cfg['width_mult'],
         bn_param=(cfg['bn_momentum'], cfg['bn_eps']), dropout_rate=cfg['dropout'],
         first_stride=cfg['first_stride'], allow_zero=cfg['allow_zero'],
     )
@@ -137,8 +138,9 @@ class SupernetEvaluator:
         self.net = super_net.to(device)
         self.edges = self.net.redundant_modules
         self.device = device
-        provider = CIFAR10DataProvider(train_batch_size=args.batch_size, test_batch_size=args.batch_size,
-                                       valid_size=args.valid_size, n_worker=args.n_worker)
+        provider = get_cifar_provider(args.dataset)(train_batch_size=args.batch_size,
+                                                    test_batch_size=args.batch_size,
+                                                    valid_size=args.valid_size, n_worker=args.n_worker)
         g = torch.Generator()
         g.manual_seed(args.manual_seed)
         bn_idx = torch.tensor(provider.train.sampler.indices)[torch.randperm(len(provider.train.sampler.indices),
@@ -277,6 +279,8 @@ if __name__ == '__main__':
     os.makedirs(args.out_path, exist_ok=True)
 
     cfg = json.load(open(os.path.join(args.supernet_path, 'supernet.config')))
+    args.dataset = cfg.get('dataset', 'cifar10')  # supernets trained before CIFAR-100 support have no key
+    assert json.load(open(args.run_config)).get('dataset', 'cifar10') == args.dataset, 'run_config dataset mismatch'
     ckpt_path = args.checkpoint or os.path.join(args.supernet_path, 'checkpoint', 'warmup.pth.tar')
     super_net = build_super_net(cfg)
     checkpoint = torch.load(ckpt_path, map_location='cpu')

@@ -107,7 +107,8 @@ venv.bak/
 .mypy_cache/
 
 # Datasets and data directories
-data/  # CIFAR-10 and other datasets (local)
+# CIFAR-10 / CIFAR-100 and other datasets (local); a trailing comment on the pattern line is not allowed
+data/
 *.tar.gz
 *.zip
 

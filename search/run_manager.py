@@ -88,9 +88,9 @@ class RunConfig:
             if self.dataset == 'imagenet':
                 from data_providers.imagenet import ImagenetDataProvider
                 self._data_provider = ImagenetDataProvider(**self.data_config)
-            elif self.dataset == 'cifar10':
-                from data_providers.cifar10 import CIFAR10DataProvider
-                self._data_provider = CIFAR10DataProvider(**self.data_config)
+            elif self.dataset in ('cifar10', 'cifar100'):
+                from data_providers.cifar10 import get_cifar_provider
+                self._data_provider = get_cifar_provider(self.dataset)(**self.data_config)
             else:
                 raise ValueError('do not support: %s' % self.dataset)
         return self._data_provider

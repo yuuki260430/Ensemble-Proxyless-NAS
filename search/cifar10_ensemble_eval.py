@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from data_providers.cifar10 import CIFAR10DataProvider
+from data_providers.cifar10 import get_cifar_provider
 from models.normal_nets.proxyless_nets import ProxylessNASNets
 from utils import count_parameters
 
@@ -40,9 +40,19 @@ def load_net(path, weights):
     return net
 
 
-def build_loader(split, batch_size, n_worker):
-    provider = CIFAR10DataProvider(test_batch_size=batch_size, valid_size=5000 if split == 'valid' else None,
-                                   n_worker=n_worker)
+def run_setting(paths):
+    """ dataset and valid split size, which must be shared by all members (read from their run.config) """
+    settings = set()
+    for path in paths:
+        rc = json.load(open(os.path.join(path, 'run.config')))
+        settings.add((rc.get('dataset', 'cifar10'), rc.get('valid_size') or 5000))
+    assert len(settings) == 1, 'members use different datasets / valid splits: %s' % settings
+    return settings.pop()
+
+
+def build_loader(split, batch_size, n_worker, dataset='cifar10', valid_size=5000):
+    provider = get_cifar_provider(dataset)(test_batch_size=batch_size,
+                                           valid_size=valid_size if split == 'valid' else None, n_worker=n_worker)
     if split == 'test':
         dataset = provider.test.dataset
     else:
@@ -73,7 +83,9 @@ if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    loader = build_loader(args.split, args.batch_size, args.n_worker)
+    dataset_name, valid_size = run_setting(args.paths)
+    print('dataset %s, split %s' % (dataset_name, args.split))
+    loader = build_loader(args.split, args.batch_size, args.n_worker, dataset_name, valid_size)
     dataset = loader.dataset
     if isinstance(dataset, torch.utils.data.Subset):
         labels = torch.tensor(dataset.dataset.targets)[dataset.indices]

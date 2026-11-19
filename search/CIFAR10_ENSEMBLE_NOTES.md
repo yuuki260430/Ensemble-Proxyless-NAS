@@ -447,6 +447,97 @@ FairNAS [15] の strict fairness を参考に、1 回の更新ごとに、各層
 - **ベースラインも同じ範囲から取る**：`--select even` で、下限を付けたパレート前線から MACs 順に等間隔で K 個取る（`cifar10_fairnas_evo.py` の書き出しと同じ規則）。Zero なしは既存の `pareto/` と 5 個とも一致する。Zero ありは `pareto/`（25.6M〜）と異なり、76.5〜109.8M の 5 個になる
 - `--candidates` のときは `init` を書き出さない（スクラッチ学習。継承重みが必要なら `--save_init`）。dropout は既定で進化探索の書き出しと同じ値（0.3）を使う
 
+**DPP の結果（11-13、`Exp5/dpp_queue.sh`、4 本で約 2 分）**：K = 5、`even5_min76`（等間隔）と `dpp5_min76`（DPP）
+
+| | 候補 | β | 類似度 S（候補全体の平均、最小〜最大） | even：S 平均 / ハミング / 総 MACs | dpp：S 平均 / ハミング / 総 MACs | 重なり |
+|---|---|---|---|---|---|---|
+| Zero あり | 18 | 0.343 | 0.371（0.116〜0.827） | 0.452 / 6.4 / 461.0M | **0.217** / 8.2 / 444.4M | 1（109.8M） |
+| Zero なし | 64 | 0.324 | 0.367（0.132〜0.859） | 0.287 / 11.7 / 472.7M | **0.257** / 11.9 / 528.9M | 1（120.4M） |
+| 参考：ProxylessNAS（`Exp3/derive/dpp5`、α からサンプル） | 30 | 0.532 | 0.417（0.343〜0.675） | − | 0.371 / 11.7 / 727.7M | − |
+
+- β は候補ごとに中央値ヒューリスティックで決まるので、S の絶対値は候補群の間で直接は比べられない（平均は構成上 0.37〜0.42 付近になる）。比べられるのは**幅**：FairNAS の候補は S が 0.12〜0.86 に広がり、ProxylessNAS（0.34〜0.68）より「互いにかなり違う組」を含む。DPP はその組を選べている（Zero ありで S 平均 0.217、等間隔の 0.452 の半分以下）
+- Zero なしでは、等間隔の取り出しでもすでに S 平均 0.287 と低く、DPP との差は小さい
+- **DPP は大きく精度の高い構造に寄る（結果の 1 つとして扱う）**：Zero なしの dpp は総 MACs 528.9M で、even（472.7M）より約 12% 多い。5 個とも 89.7〜120.4M、supernet 精度 87.4〜89.3%（even は 76.2M・83.1% から含む）。品質 r（学習データの一部での精度）が大きい構造ほど高いので、多様性が同程度なら大きい構造が選ばれる。**今回は `--max_flops` などで総 MACs をそろえる調整はしない**（11-13 決定）。アンサンブルの比較では総 MACs の差を明記する
+- Zero ありのベースライン（下限 76M の `even5_min76` か、全範囲の `pareto/` か）をどう扱うかは今後決める
+
+**スクラッチ再学習（11-13 05:03 開始、`Exp5/retrain_queue.sh`、ログ `Exp5/retrain_queue.log`）**
+- 対象：`even5_min76` と `dpp5_min76` の全構造（Zero あり・なし）、seed 0、`init` なし、run.config は従来のスクラッチ（`Exp3/scratch`）と同じ。一覧は `Exp5/retrain_list.txt`（18 モデル）。各 `arch_XX/` の中で学習し、`output` があるものは飛ばす
+- 重なる構造は 1 回だけ学習し、dpp 側のフォルダに `SAME_AS` で参照先を書いた：`evo_zero/dpp5_min76/arch_00` = `evo_zero/even5_min76/arch_04`、`evo_nozero/dpp5_min76/arch_01` = `evo_nozero/even5_min76/arch_04`。アンサンブル評価ではこの参照先を使う
+- 1 エポック約 10 秒（1 モデル約 25 分）。18 モデルで約 8 時間の見込み
+- **11-13 06:37 の自動アップデート（unattended-upgrade）の影響**：サービスの再起動で (1) DNS が一時的に使えなくなり、`even5_min76/arch_04`（Zero あり）が起動直後に失敗した（`RunManager` が毎回レイテンシ表をダウンロードし直すため）。(2) thermald の再起動後、学習中も CPU が 400〜800MHz（最大 4.7GHz）にとどまり、データの読み込みが追いつかず 1 モデル約 23 分 → 約 55 分に遅くなった。温度は 31°C で熱の問題ではない。サーバーの設定（thermald など）は変更していない
+- 対応：`utils/latency_estimator.py` はダウンロードに失敗したらキャッシュを使うよう修正。キューの `exit=$?` は `$(date)` の終了コードを拾っていた（失敗しても 0）ので、直前に保存するよう修正。`arch_04` は 11-15 に再学習
+
+**単体の精度（スクラッチ、seed 0、test 10,000 枚 / valid 5,000 枚）**
+
+| | Zero あり（8 / 9 個） | Zero なし（9 個） | 参考：Exp3 の ProxylessNAS 構造（138〜159M） |
+|---|---|---|---|
+| test top-1 | 90.48〜91.07% | 89.88〜90.39% | 89.80〜90.72%（同じ構造の seed 0〜2 で 90.26〜90.72%） |
+| valid top-1 | 90.64〜92.40% | 89.84〜91.30% | − |
+| supernet 精度との順位相関（Spearman、test / valid） | −0.43 / 0.17 | 0.22 / 0.60 | − |
+| MACs との順位相関（test / valid） | −0.48 / 0.26 | 0.07 / 0.45 | − |
+
+- **単体精度は MACs 76〜120M でほぼ横ばい**。構造による差（約 0.5 ポイント）は seed による差（同じ構造で約 0.5 ポイント）と同程度で、supernet 精度の順位が単体精度の順位と合うかは、この 1 seed では判断できない（順位相関は test と valid で符号まで変わる）。4 章の「80M 以上で頭打ち」は単体学習でも確認された。ProxylessNAS の 140〜160M の構造とも差がない
+- Zero ありの方が Zero なしより約 0.7 ポイント高い（パラメータ数は少ない）。Zero なしは 21 ブロックすべてを持つ深い構造なので、150 エポックでは学習しきれていない可能性がある（未確認）
+
+**アンサンブル（Zero なし、5 個、softmax 平均）**
+
+| | 総 MACs | test acc ↑ | test NLL ↓ | 食い違い率（test）↑ | valid acc ↑ |
+|---|---|---|---|---|---|
+| even5_min76 | 472.7M | **92.93** | **0.3009** | **10.45** | **93.40** |
+| dpp5_min76 | 528.9M | 92.74 | 0.3041 | 10.41 | 93.22 |
+
+- DPP は総 MACs が約 12% 多いが、精度・食い違い率ともに等間隔の取り出しと同程度（わずかに下）。supernet 上の類似度の差が小さかった（0.287 対 0.257）ことと合う
+
+**アンサンブル（Zero あり、5 個）**：`even5_min76/arch_04`（再学習分）は test 91.29% / valid 91.44%
+
+| | 総 MACs | test acc ↑ | test NLL ↓ | 食い違い率（test）↑ | valid acc ↑ | 食い違い率（valid）↑ |
+|---|---|---|---|---|---|---|
+| even5_min76 | 461.0M | **93.31** | **0.2874** | **9.53** | 93.50 | **9.21** |
+| dpp5_min76 | 444.4M | 93.07 | 0.2913 | 9.41 | **93.80** | 8.89 |
+
+- supernet 上では DPP の 5 個の類似度は等間隔の半分以下（0.217 対 0.452）だったが、**再学習後の食い違い率は DPP の方がわずかに低い**。supernet の特徴で測った多様性が、スクラッチ学習後の予測の多様性に引き継がれていない
+- 精度は test では even、valid では dpp が上で、差は 0.2〜0.3 ポイント（seed 違いの幅と同程度）
+- 結果は `Exp5/ensemble/*.json`
+
+**seed 違いのアンサンブル（11-15 キューに追加）**
+- 構造：各探索空間の `even5_min76/arch_02`（等間隔 5 個の中央、Zero あり 89.6M・Zero なし 92.2M）。テスト精度で選ぶとテストデータを選択に使うことになるので、事前に決まる規則で選んだ。5 個の総 MACs は 448M / 461M で、even5（461M / 473M）に近い
+- seed 0 は `even5_min76/arch_02` を流用し、seed 1〜4 を `Exp5/evo_{zero,nozero}/seed_even02/s1〜s4` で学習（8 モデル、11-16 07:28 完了）
+
+**CIFAR-10 の最終比較（5 個、test / valid）**
+
+| | 総 MACs | test acc | test NLL | 食い違い率（test） | valid acc |
+|---|---|---|---|---|---|
+| Zero あり seed（arch_02 × 5） | 448.0M | 93.24 | 0.2870 | **9.65** | 93.76 |
+| Zero あり even5 | 461.0M | **93.31** | 0.2874 | 9.53 | 93.50 |
+| Zero あり dpp5 | 444.4M | 93.07 | 0.2913 | 9.41 | **93.80** |
+| Zero なし seed（arch_02 × 5） | 461.3M | 92.77 | 0.3021 | 10.31 | 93.34 |
+| Zero なし even5 | 472.7M | **92.93** | **0.3009** | **10.45** | **93.40** |
+| Zero なし dpp5 | 528.9M | 92.74 | 0.3041 | 10.41 | 93.22 |
+
+- 3 条件の差は 0.3 ポイント以内。seed 違いの単体精度の幅（Zero あり 90.50〜91.20%）と同程度で、差はつかない
+
+**多様性の指標は再学習後の多様性を予測するか（11-19、`Exp5/ensemble/*_all9_valid.json`）**：再学習した 9 構造の全 36 組で、supernet 上の類似度 S と再学習後の食い違い率（valid）を比べた
+
+| | S と食い違い率の順位相関（負が期待） | 食い違い率を誤り率の和で割った値 vs S | 正規化した食い違い：違う構造の組 | 同じ構造・seed 違いの組 |
+|---|---|---|---|---|
+| Zero あり | +0.36 | +0.09 | 0.525（0.483〜0.579） | 0.525 |
+| Zero なし | +0.07 | −0.22 | 0.532（0.497〜0.560） | 0.525 |
+
+- 食い違い率は主にメンバーの誤り率で決まる（誤り率の和との相関 +0.36 / +0.78）。誤り率で正規化すると、**違う構造の組と同じ構造の seed 違いの組で多様性が同じ**（0.525 対 0.525〜0.532）
+- → CIFAR-10・この探索空間・MACs 76〜120M では、**構造の違いは seed の違い以上の多様性を生まない**。どんな選び方をしても seed アンサンブルを上回る余地がほぼない。DPP の類似度 S もこの条件では再学習後の多様性を予測しない
+- CIFAR-100 に移る前に、まず「構造の違いが seed の違い以上の多様性を生むか」を小さな予備実験で確かめる（7 章の計画）
+
+**方針の決定（11-19）**
+- 卒業論文では、DPP による手法を「supernet に適用できるアンサンブル候補の選択手法」として発表する。予稿の先生確認の締め切りは 2027-01-16
+- ベースライン：FairNAS（Zero なしが本家どおり）。Zero あり・なしの 2 つの supernet で検証する。比較するアンサンブルは seed 違い・パレート前線から等間隔・supernet 精度の上位 K 個・ランダム K 個・DPP
+- 次に CIFAR-100 へ移る
+
+**品質と多様性のバランスの現状（11-19）**：DPP のスコア log det L = 2γ Σ log r_i + log det S_Y（γ = 1）で、5 個の組み合わせ全体での 2 つの項のばらつき（標準偏差）を比べた
+- Zero あり：品質の項 0.014、多様性の項 0.543（**多様性が約 40 倍**）。品質は 91.9〜93.2% と幅が狭く、選択はほぼ多様性だけで決まる
+- Zero なし：品質の項 0.096、多様性の項 0.396（約 4 倍）。品質が 86.8〜94.3% と広いので、品質も効く（大きい構造に寄った原因）
+- → 同じ γ でも、候補群の精度の幅しだいでバランスが 10 倍変わる。値そのものを掛けるので、尺度に依存している。DivBO [Shen et al., NeurIPS 2022] は順位の和と飽和する重みでこれを避けている（7 章で検討）
+- 品質（probe acc）：Zero ありは 91.85〜93.15% と幅が狭く、選択はほぼ多様性で決まる
+
 ```bash
 cd search
 # 段階 1（Zero なしは --no_zero を付ける）
@@ -462,6 +553,45 @@ uv run python cifar10_derive_archs.py --candidates ../Exp5/evo_zero/candidates.j
 uv run python cifar10_derive_archs.py --candidates ../Exp5/evo_zero/candidates.json --candidate_set pareto_front \
   --run_config ../Exp3/fair70_search/learned_net/run.config --min_flops 76 \
   --out_path ../Exp5/evo_zero/dpp5_min76 --n_archs 5 --select dpp
+```
+
+### 6.6 CIFAR-100 対応と選び方の選択肢の追加（11-19）
+
+**CIFAR-100 対応**
+- `data_providers/cifar10.py` に `CIFAR100DataProvider`（CIFAR-10 と同じ分割・データ拡張、正規化の値だけ CIFAR-100 用）と `get_cifar_provider(dataset)` を追加。CIFAR-10 の挙動は変えていない（アンサンブル評価 92.93% を再現）
+- データセットは設定ファイルから決まる：`cifar10_fairnas_supernet.py --dataset cifar100` が `supernet.config` に記録し、進化探索・`cifar10_derive_archs.py` はそこから読む（run.config の dataset と一致しなければ停止）。再学習とアンサンブル評価は各フォルダの `run.config` の `dataset` を使う。キーがない古いファイルは cifar10 として扱う
+- CIFAR-100 用の run.config は、従来の run.config の `"dataset"` を `"cifar100"` に変えたものを使う（ほかの設定は同じ）
+
+**DPP の選び方の選択肢（既定値は従来の方法のまま）**
+
+| オプション | 既定（従来） | 追加した選択肢 |
+|---|---|---|
+| `--dpp_score` | `logdet`：det(diag(r) S diag(r)) の貪欲法 | `rank_sat`：k 個目を R_perf + w_k R_div が最小の候補にする。R は残りの候補の中での順位、w_k = sat_beta (sigmoid(sat_tau k) − 0.5)（DivBO の式 5 の t を貪欲法の k に置き換え）。順位なので精度と類似度の尺度に依存しない |
+| `--div_gain`（rank_sat） | `logdet`：S での log det の増え方 | `min`：選択済みの中で最も近いものとの 1 − S（DivBO の式 4） |
+| `--dpp_quality` | `probe`：学習データ 2,000 枚での精度 | `supernet_acc`：進化探索が検証データ 5,000 枚で測った精度 |
+| `--dpp_diversity` | `feature`：最終層の手前の特徴 | `prob`：クラスの確率（DivBO の式 3） |
+| `--probe_split` | `train` | `valid`（supernet の学習に使っていない分割） |
+
+- 貪欲法は `greedy_select()` に切り出し、下の分析スクリプトと共有
+- archs.json に候補の並び（`pool_archs`・`pool_supernet_acc`・`pool_flops_M`）を保存するようにした
+
+**再現性の修正**：`cifar10_derive_archs.py` で torch の乱数を固定していなかったため、BN 再計算に使うバッチが実行ごとに変わり、probe acc と DPP の選択が変わっていた。Zero ありで seed を変えると、1 個目（最も probe acc が高い候補）が 16 / 10 / 13 / 17 と入れ替わる（2 個目以降はほぼ 3, 5, 9, 2 で安定）。probe acc の差は BN 再計算の揺らぎ程度しかなく、品質の値の大部分が雑音であることを示す。`torch.manual_seed(manual_seed)` を追加して固定した。`Exp5/*/dpp5_min76` はこの修正の前に選んだもの
+
+**組み合わせの網羅分析（`cifar10_subset_analysis.py`）**：再学習済みの n 構造から作れる K 個の組をすべて作り、実際のアンサンブル精度（valid）と、各スコア・各選び方の結果を比べる。予備実験で sat_beta・sat_tau・γ を決めるための道具（決めた値は本実験で固定する）
+- CIFAR-10 で動作確認（`Exp5/ensemble/*_subset_analysis_valid.json`）：126 通りの組の精度の幅は Zero あり 93.32〜94.16%、Zero なし 92.82〜93.62%（標準偏差 0.15〜0.19）。valid 5,000 枚の誤差（約 0.34 ポイント）と同程度なので、ここではパラメータを決めない
+- rank_sat は sat_beta ≤ 2 だと w_k < 1 になり、品質の順位だけで選ぶのと同じ結果になりやすい（候補が少ないとき）。予備実験では sat_beta を 2〜8 付近で調べる
+
+```bash
+cd search
+# CIFAR-100 の supernet（Zero なしは --no_zero）
+uv run python cifar10_fairnas_supernet.py --path ../Exp6/fairnas_nozero --dataset cifar100 --gpu 0 --fair_grad mean --no_zero
+# 選び方の例：DivBO 型の順位と飽和重み、品質は検証データでの supernet 精度、多様性は予測の確率
+uv run python cifar10_derive_archs.py --candidates <candidates.json> --candidate_set pareto_front --run_config <run.config> \
+  --out_path <out> --n_archs 5 --select dpp --dpp_score rank_sat --sat_beta 4 --sat_tau 0.5 \
+  --dpp_quality supernet_acc --dpp_diversity prob
+# 組み合わせの網羅分析（valid で行う）
+uv run python cifar10_subset_analysis.py --pool_json <dpp の archs.json> --paths <再学習したフォルダ ...> \
+  --quality supernet_acc --output <out.json>
 ```
 
 ## 7. 論文に書くべき点

@@ -1,5 +1,4 @@
-# ProxylessNAS: CIFAR-10 Data Provider
-# Extended for CIFAR-10 dataset support
+# ProxylessNAS: CIFAR-10 / CIFAR-100 Data Providers
 
 import torch.utils.data
 import torchvision.transforms as transforms
@@ -9,13 +8,18 @@ from data_providers.base_provider import *
 
 
 class CIFAR10DataProvider(DataProvider):
+    DATASET = datasets.CIFAR10
+    NAME = 'cifar10'
+    N_CLASSES = 10
+    URL = 'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'
+    MEAN, STD = [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010]  # values used by all CIFAR-10 runs so far
 
     def __init__(self, save_path=None, train_batch_size=128, test_batch_size=128, valid_size=None,
                  n_worker=4, resize_scale=0.08, distort_color=None):
 
         self._save_path = save_path
         train_transforms = self.build_train_transform(distort_color, resize_scale)
-        train_dataset = datasets.CIFAR10(
+        train_dataset = self.DATASET(
             root=self.save_path, train=True, transform=train_transforms, download=True
         )
 
@@ -30,7 +34,7 @@ class CIFAR10DataProvider(DataProvider):
             train_sampler = torch.utils.data.sampler.SubsetRandomSampler(train_indexes)
             valid_sampler = torch.utils.data.sampler.SubsetRandomSampler(valid_indexes)
 
-            valid_dataset = datasets.CIFAR10(
+            valid_dataset = self.DATASET(
                 root=self.save_path, train=True, transform=transforms.Compose([
                     transforms.ToTensor(),
                     self.normalize,
@@ -55,7 +59,7 @@ class CIFAR10DataProvider(DataProvider):
             self.valid = None
 
         self.test = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root=self.save_path, train=False, transform=transforms.Compose([
+            self.DATASET(root=self.save_path, train=False, transform=transforms.Compose([
                 transforms.ToTensor(),
                 self.normalize,
             ]), download=True),
@@ -65,9 +69,9 @@ class CIFAR10DataProvider(DataProvider):
         if self.valid is None:
             self.valid = self.test
 
-    @staticmethod
-    def name():
-        return 'cifar10'
+    @classmethod
+    def name(cls):
+        return cls.NAME
 
     @property
     def data_shape(self):
@@ -75,7 +79,7 @@ class CIFAR10DataProvider(DataProvider):
 
     @property
     def n_classes(self):
-        return 10
+        return self.N_CLASSES
 
     @property
     def save_path(self):
@@ -83,18 +87,17 @@ class CIFAR10DataProvider(DataProvider):
             # Store in project directory (will be ignored by git)
             import os
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            self._save_path = os.path.join(project_root, 'data', 'cifar10')
+            self._save_path = os.path.join(project_root, 'data', self.NAME)
             os.makedirs(self._save_path, exist_ok=True)
         return self._save_path
 
     @property
     def data_url(self):
-        return 'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'
+        return self.URL
 
     @property
     def normalize(self):
-        # CIFAR-10 official normalization parameters
-        return transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010])
+        return transforms.Normalize(mean=self.MEAN, std=self.STD)
 
     def build_train_transform(self, distort_color, resize_scale):
         print('Color jitter: %s' % distort_color)
@@ -125,3 +128,22 @@ class CIFAR10DataProvider(DataProvider):
     @property
     def image_size(self):
         return 32
+
+
+class CIFAR100DataProvider(CIFAR10DataProvider):
+    """ same pipeline as CIFAR-10 (split, augmentation); only the dataset and the normalization differ """
+    DATASET = datasets.CIFAR100
+    NAME = 'cifar100'
+    N_CLASSES = 100
+    URL = 'https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz'
+    MEAN, STD = [0.5071, 0.4865, 0.4409], [0.2673, 0.2564, 0.2762]
+
+
+CIFAR_PROVIDERS = {'cifar10': CIFAR10DataProvider, 'cifar100': CIFAR100DataProvider}
+
+
+def get_cifar_provider(dataset):
+    """ data provider class for 'cifar10' / 'cifar100' """
+    if dataset not in CIFAR_PROVIDERS:
+        raise ValueError('do not support: %s' % dataset)
+    return CIFAR_PROVIDERS[dataset]

@@ -30,8 +30,9 @@ parser.add_argument('--n_epochs', type=int, default=150)
 parser.add_argument('--init_lr', type=float, default=0.045)
 parser.add_argument('--train_batch_size', type=int, default=256)
 parser.add_argument('--test_batch_size', type=int, default=256)
+parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'])
 parser.add_argument('--valid_size', type=int, default=5000,
-                    help='held-out part of the CIFAR-10 train set (same split as the ProxylessNAS runs)')
+                    help='held-out part of the train set (CIFAR-10: same split as the ProxylessNAS runs)')
 parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--nesterov', action='store_true', help='the paper only states momentum 0.9')
 parser.add_argument('--weight_decay', type=float, default=4e-5)
@@ -70,7 +71,7 @@ if __name__ == '__main__':
     os.makedirs(args.path, exist_ok=True)
 
     run_config = CIFAR10RunConfig(
-        n_epochs=args.n_epochs, init_lr=args.init_lr, lr_schedule_type='cosine', dataset='cifar10',
+        n_epochs=args.n_epochs, init_lr=args.init_lr, lr_schedule_type='cosine', dataset=args.dataset,
         train_batch_size=args.train_batch_size, test_batch_size=args.test_batch_size, valid_size=args.valid_size,
         opt_type='sgd', opt_param={'momentum': args.momentum, 'nesterov': args.nesterov},
         weight_decay=args.weight_decay, label_smoothing=args.label_smoothing, no_decay_keys=None,
@@ -81,7 +82,7 @@ if __name__ == '__main__':
         'width_stages': args.width_stages, 'n_cell_stages': args.n_cell_stages,
         'stride_stages': args.stride_stages, 'first_stride': args.first_stride, 'width_mult': args.width_mult,
         'bn_momentum': args.bn_momentum, 'bn_eps': args.bn_eps, 'dropout': args.dropout,
-        'conv_candidates': CONV_CANDIDATES, 'allow_zero': not args.no_zero,
+        'conv_candidates': CONV_CANDIDATES, 'allow_zero': not args.no_zero, 'dataset': args.dataset,
     }
     super_net = SuperProxylessNASNets(
         width_stages=[int(v) for v in args.width_stages.split(',')],

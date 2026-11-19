@@ -22,7 +22,15 @@ def download_url(url, model_dir='~/.torch/proxyless_nas', overwrite=False):
     cached_file = os.path.join(model_dir, filename)
     if not os.path.exists(cached_file) or overwrite:
         sys.stderr.write('Downloading: "{}" to {}\n'.format(url, cached_file))
-        urlretrieve(url, cached_file)
+        try:
+            # download to a temporary file so that a failed download never corrupts the cache
+            urlretrieve(url, cached_file + '.tmp')
+            os.replace(cached_file + '.tmp', cached_file)
+        except OSError as e:
+            # e.g. a temporary DNS failure: fall back to the cached copy instead of aborting a training run
+            if not os.path.exists(cached_file):
+                raise
+            sys.stderr.write('Download failed ({}), using cached {}\n'.format(e, cached_file))
     return cached_file
 
 

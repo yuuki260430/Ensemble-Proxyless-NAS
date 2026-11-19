@@ -28,7 +28,7 @@ parser.add_argument('--init_lr', type=float, default=0.1)
 parser.add_argument('--lr_schedule_type', type=str, default='cosine')
 # lr_schedule_param
 
-parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10'])
+parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'])
 parser.add_argument('--train_batch_size', type=int, default=128)
 parser.add_argument('--test_batch_size', type=int, default=256)
 parser.add_argument('--valid_size', type=int, default=None)

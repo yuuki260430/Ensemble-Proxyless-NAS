@@ -229,7 +229,7 @@ class ArchSearchRunManager:
         self.net.unused_modules_off()
         # test on validation set under train mode
         # CIFAR-10 does not need top-5 accuracy (only 10 classes)
-        return_top5 = self.run_manager.run_config.dataset != 'cifar10'
+        return_top5 = self.run_manager.run_config.dataset not in ('cifar10', 'cifar100')
         valid_res = self.run_manager.validate(is_test=False, use_train_mode=True, return_top5=return_top5)
         # flops of chosen network
         flops = self.run_manager.net_flops()
@@ -360,7 +360,7 @@ class ArchSearchRunManager:
                     self.run_manager.write_log(batch_log, 'train')
             valid_res, flops, latency = self.validate()
             # Handle dataset-specific unpacking (CIFAR-10: 2 values, ImageNet: 3 values)
-            if self.run_manager.run_config.dataset == 'cifar10':
+            if self.run_manager.run_config.dataset in ('cifar10', 'cifar100'):
                 val_loss, val_top1 = valid_res
                 val_top5 = 0  # Placeholder for logging
                 val_log = 'Warmup Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f}\t' \
@@ -503,14 +503,14 @@ class ArchSearchRunManager:
             if (epoch + 1) % self.run_manager.run_config.validation_frequency == 0:
                 valid_res, flops, latency = self.validate()
                 # Handle dataset-specific unpacking (CIFAR-10: 2 values, ImageNet: 3 values)
-                if self.run_manager.run_config.dataset == 'cifar10':
+                if self.run_manager.run_config.dataset in ('cifar10', 'cifar100'):
                     val_loss, val_top1 = valid_res
                     val_top5 = 0  # Placeholder for logging
                 else:
                     val_loss, val_top1, val_top5 = valid_res
                 self.run_manager.best_acc = max(self.run_manager.best_acc, val_top1)
                 
-                if self.run_manager.run_config.dataset == 'cifar10':
+                if self.run_manager.run_config.dataset in ('cifar10', 'cifar100'):
                     val_log = 'Valid [{0}/{1}]\tloss {2:.3f}\ttop-1 acc {3:.3f} ({4:.3f})\t' \
                               'Train top-1 {top1.avg:.3f}\t' \
                               'Entropy {entropy.val:.5f}\t' \
