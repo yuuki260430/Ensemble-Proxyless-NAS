@@ -51,6 +51,10 @@ for space in ['zero', 'nozero']:
             m = torch.stack([probs[d] for d in ms]).mean(0)
             return (m.argmax(1) == labels).float().mean().item() * 100
 
+        def ens_nll(ms):
+            m = torch.stack([probs[d] for d in ms]).mean(0)
+            return torch.nn.functional.nll_loss(torch.log(m.clamp_min(1e-12)), labels).item()
+
         arch_pairs = list(itertools.combinations(range(6), 2))
         ap = [pair(archs[i], archs[j]) for i, j in arch_pairs]
         sp = [pair(a, b) for a, b in itertools.combinations(seeds, 2)]
@@ -59,7 +63,11 @@ for space in ['zero', 'nozero']:
              'seed_dis': [x[0] for x in sp], 'seed_ndis': [x[1] for x in sp],
              'ens4_seed': ens(seeds),
              'ens4_arch_all': [ens([archs[i] for i in c]) for c in itertools.combinations(range(6), 4)],
-             'ens6_arch': ens(archs)}
+             'ens6_arch': ens(archs),
+             'nll_single_arch': [ens_nll([d]) for d in archs], 'nll_single_seed': [ens_nll([d]) for d in seeds],
+             'nll_ens4_seed': ens_nll(seeds),
+             'nll_ens4_arch_all': [ens_nll([archs[i] for i in c]) for c in itertools.combinations(range(6), 4)],
+             'nll_ens6_arch': ens_nll(archs)}
         for tag, S in sims.items():
             s = [S[i, j] for i, j in arch_pairs]
             r['spearman_S_vs_ndis_' + tag] = spearman(s, r['arch_ndis'])
@@ -76,6 +84,10 @@ for space in ['zero', 'nozero']:
         e = r['ens4_arch_all']
         print('  K=4 ensemble  seed %.2f | arch subsets mean %.2f (%.2f-%.2f) | K=6 archs %.2f' % (
             r['ens4_seed'], np.mean(e), min(e), max(e), r['ens6_arch']))
+        e = r['nll_ens4_arch_all']
+        print('  NLL single archs %.3f seeds %.3f | K=4 seed %.4f | arch subsets mean %.4f (%.4f-%.4f) | K=6 %.4f' % (
+            np.mean(r['nll_single_arch']), np.mean(r['nll_single_seed']), r['nll_ens4_seed'], np.mean(e), min(e),
+            max(e), r['nll_ens6_arch']))
         for k, v in r.items():
             if k.startswith('spearman'):
                 print('  %s %+.2f' % (k, v))

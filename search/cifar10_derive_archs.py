@@ -24,7 +24,8 @@ parser.add_argument('--candidates', type=str, default=None,
                     help='FairNAS baseline: candidates.json of cifar10_fairnas_evo.py, used instead of alpha '
                          '(the supernet settings are read from <supernet_path>/supernet.config)')
 parser.add_argument('--candidate_set', type=str, default='final_population',
-                    choices=['final_population', 'pareto_front'], help='[candidates] which set forms the pool')
+                    help='[candidates] which list of candidates.json forms the pool (final_population, pareto_front, '
+                         'or a list added by hand, e.g. near_front)')
 parser.add_argument('--run_config', type=str, default=None,
                     help='[candidates] run.config for retraining (default for --search_path: learned_net/run.config)')
 parser.add_argument('--checkpoint', type=str, default=None, help='default: <search_path>/checkpoint/checkpoint.pth.tar')
