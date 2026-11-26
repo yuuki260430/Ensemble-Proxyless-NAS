@@ -775,6 +775,13 @@ uv run python cifar10_subset_analysis.py --pool_json <dpp の archs.json> --path
 - 原因の候補：再学習の設定が ImageNet 向け（ProxylessNAS の `learned_net/run.config`）のまま。weight decay 4e-5（CIFAR で一般的なのは 5e-4 程度）、データ拡張は crop・flip・弱い色変換のみ、正則化は label smoothing 0.1 と最終層の dropout 0.3 だけ。supernet の学習（wd 4e-5、dropout 0、label smoothing なし）も同様で、学習 88% / 検証 55% だった
 - データセットだけの問題ではない：CIFAR-100 は 1 クラス 450 枚と少なく過学習しやすいが、正則化を CIFAR 向けにすれば改善するはず。要確認
 
+### 6.13 CIFAR 標準に寄せた再学習の設定の確認（`Exp7/`、11-26 開始）
+
+- `Exp7/run.config`：Exp6/run.config から次だけ変更。weight decay 4e-5 → **5e-4**、BN とバイアスには weight decay をかけない（`no_decay_keys: bn#bias`）、色の変換なし（`distort_color: null`）、**Cutout 8×8**（`cutout: 8`、DeVries & Taylor 2017 の CIFAR-100 の設定。正規化の後に適用、中心は画像内で一様、はみ出しは切る）、エポック数 150 → **200**。学習率 0.05・バッチ 256・cosine・Nesterov・label smoothing 0.1・最終層 dropout 0.3 は変更なし
+- コード：`data_providers/cifar10.py` に `Cutout` と `cutout` 引数（既定 0 = なし、既存の設定はそのまま動く）、`CIFAR10RunConfig` に `cutout` を追加
+- 対象：大きさの違う 3 構造（`Exp7/std_recipe/a25.7M`・`a58.1M`・`a114.5M`、元は `SOURCE` に記載：Exp6 の pareto/arch_00・pareto/arch_02・near_front/arch_05）。1 本約 75 分の見込み
+- 見ること：(1) 検証・テスト精度が上がるか、(2) 学習精度が 99.9% に張り付かなくなるか、(3) 小さい構造と大きい構造の精度差が現れるか（旧設定：25.7M 65.9%、58.1M 66.6%、114.5M 67.2%、test）
+
 ## 7. 論文に書くべき点
 
 ### 7.1 元の手法からの変更（手法・実験設定の節に明記）

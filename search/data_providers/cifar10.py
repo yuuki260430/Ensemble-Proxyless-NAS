@@ -7,6 +7,23 @@ import torchvision.datasets as datasets
 from data_providers.base_provider import *
 
 
+class Cutout:
+    """ DeVries & Taylor 2017: zero one length x length square (center uniform over the image, may be clipped),
+    applied to the normalized tensor """
+
+    def __init__(self, length):
+        self.length = length
+
+    def __call__(self, img):
+        h, w = img.shape[1:]
+        y, x = torch.randint(h, (1,)).item(), torch.randint(w, (1,)).item()
+        y1, y2 = max(0, y - self.length // 2), min(h, y + self.length // 2)
+        x1, x2 = max(0, x - self.length // 2), min(w, x + self.length // 2)
+        img = img.clone()
+        img[:, y1:y2, x1:x2] = 0.
+        return img
+
+
 class CIFAR10DataProvider(DataProvider):
     DATASET = datasets.CIFAR10
     NAME = 'cifar10'
@@ -15,10 +32,10 @@ class CIFAR10DataProvider(DataProvider):
     MEAN, STD = [0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010]  # values used by all CIFAR-10 runs so far
 
     def __init__(self, save_path=None, train_batch_size=128, test_batch_size=128, valid_size=None,
-                 n_worker=4, resize_scale=0.08, distort_color=None):
+                 n_worker=4, resize_scale=0.08, distort_color=None, cutout=0):
 
         self._save_path = save_path
-        train_transforms = self.build_train_transform(distort_color, resize_scale)
+        train_transforms = self.build_train_transform(distort_color, resize_scale, cutout)
         train_dataset = self.DATASET(
             root=self.save_path, train=True, transform=train_transforms, download=True
         )
@@ -99,8 +116,8 @@ class CIFAR10DataProvider(DataProvider):
     def normalize(self):
         return transforms.Normalize(mean=self.MEAN, std=self.STD)
 
-    def build_train_transform(self, distort_color, resize_scale):
-        print('Color jitter: %s' % distort_color)
+    def build_train_transform(self, distort_color, resize_scale, cutout=0):
+        print('Color jitter: %s, Cutout: %s' % (distort_color, cutout or 'None'))
         if distort_color == 'strong':
             color_transform = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
         elif distort_color == 'normal':
@@ -108,22 +125,13 @@ class CIFAR10DataProvider(DataProvider):
         else:
             color_transform = None
         
-        if color_transform is None:
-            train_transforms = transforms.Compose([
-                transforms.RandomCrop(self.image_size, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                self.normalize,
-            ])
-        else:
-            train_transforms = transforms.Compose([
-                transforms.RandomCrop(self.image_size, padding=4),
-                transforms.RandomHorizontalFlip(),
-                color_transform,
-                transforms.ToTensor(),
-                self.normalize,
-            ])
-        return train_transforms
+        ops = [transforms.RandomCrop(self.image_size, padding=4), transforms.RandomHorizontalFlip()]
+        if color_transform is not None:
+            ops.append(color_transform)
+        ops += [transforms.ToTensor(), self.normalize]
+        if cutout:
+            ops.append(Cutout(cutout))
+        return transforms.Compose(ops)
 
     @property
     def image_size(self):
