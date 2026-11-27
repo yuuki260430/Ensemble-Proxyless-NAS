@@ -2,7 +2,7 @@
 # For the retrained archs of Exp6/zero_all_analysis.json: subnet predictions with inherited weights (BN recalibrated as
 # in the evolutionary search) on the valid split, pairwise measures, and their (partial) Spearman correlation with the
 # retrained normalized disagreement. Controls: |dMACs|, |d supernet acc|, min supernet acc of the pair.
-# usage: cd search && uv run python cifar100_diversity_proxy.py  (writes Exp6/diversity_proxy.json)
+# usage: cd search && uv run python cifar100_diversity_proxy.py  (writes Exp6/diversity_proxy.json; EXP=Exp7 for Exp7/)
 import argparse
 import itertools
 import json
@@ -15,7 +15,8 @@ from cifar10_fairnas_evo import build_super_net, SupernetEvaluator
 from modules.mix_op import MixedEdge
 
 ROOT = os.path.abspath('..')
-BASE = os.path.join(ROOT, 'Exp6/evo_zero')
+EXP = os.environ.get('EXP', 'Exp6')  # Exp6: ImageNet-style retraining recipe, Exp7: CIFAR-standard recipe
+BASE = os.path.join(ROOT, EXP, 'evo_zero')
 device = torch.device('cuda:0')
 
 
@@ -56,7 +57,7 @@ def subnet_probs(ev, arch):
 
 
 if __name__ == '__main__':
-    res = json.load(open(os.path.join(ROOT, 'Exp6/zero_all_analysis.json')))
+    res = json.load(open(os.path.join(ROOT, EXP, 'zero_all_analysis.json')))
     archs = [tuple(a) for a in res['archs']]
     flops = np.array(res['flops_M'])
     cand = json.load(open(os.path.join(BASE, 'candidates.json')))
@@ -115,4 +116,4 @@ if __name__ == '__main__':
             k, out['valid'][k]['raw'], out['test'][k]['raw'], out['valid'][k]['partial'], out['test'][k]['partial']))
     for k, c in [('min supernet acc (negated)', [-x for x in mQ]), ('|d supernet acc|', dQ), ('|dMACs|', dF)]:
         print('%-42s   %+.2f / %+.2f' % (k, spearman(c, res['valid']['pair_ndis']), spearman(c, res['test']['pair_ndis'])))
-    json.dump(out, open(os.path.join(ROOT, 'Exp6/diversity_proxy.json'), 'w'), indent=1)
+    json.dump(out, open(os.path.join(ROOT, EXP, 'diversity_proxy.json'), 'w'), indent=1)

@@ -796,6 +796,11 @@ uv run python cifar10_subset_analysis.py --pool_json <dpp の archs.json> --path
 - 結論：旧設定（ImageNet 向けの weight decay 4e-5）は CIFAR-100 には正則化が弱すぎ、**構造の差が精度に現れにくくなっていた**。6.9〜6.11 の「再学習後の精度差は seed のばらつき程度」「supernet 精度は再学習後の精度をほとんど予測しない」は、旧設定の下での結論であり、新設定で再確認が必要
 - 1 seed・3 構造だけの確認なので、差の大きさそのものは暫定値
 
+**全構造の再学習（11-27 開始、`Exp7/full_queue.sh` → `Exp7/full_queue.log`）**
+- `Exp7/evo_zero` は `Exp6/evo_zero` と同じ構成（net.config・archs.json・SAME_AS は同じ。run.config だけ Exp7 のもの）
+- 対象：6.10 の 27 構造（seed 0）と、seed 違い（32.9M の seed 1・2、84.6M の seed 1〜3）の計 32 本。上の 3 本は再学習せずにコピー（`COPIED_FROM`）。残り 29 本で約 30 時間の見込み
+- 解析は同じスクリプトを `EXP=Exp7` で実行する（`cifar100_zero_all_analysis.py`・`cifar100_diversity_proxy.py`・`cifar100_pilot2_analysis.py`。出力は `Exp7/` に保存）。6.10 の信頼性の計算は、`cifar100_zero_all_analysis.py` に追加した（Exp6 で 0.00 / 0.14 を再現済み）
+
 ## 7. 論文に書くべき点
 
 ### 7.1 元の手法からの変更（手法・実験設定の節に明記）

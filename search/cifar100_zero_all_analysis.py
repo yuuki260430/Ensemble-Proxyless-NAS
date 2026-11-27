@@ -2,7 +2,7 @@
 # (1) supernet accuracy / MACs vs retrained accuracy over the whole Pareto range
 # (2) pairwise diversity vs MACs difference / Hamming, against seed pairs of a small (32.9M) and a large (84.6M) arch
 # (3) ensembles under a MACs budget: distinct small archs vs seeds of one small arch vs one large model
-# usage: cd search && uv run python cifar100_zero_all_analysis.py  (writes Exp6/zero_all_analysis.json)
+# usage: cd search && uv run python cifar100_zero_all_analysis.py  (writes Exp6/zero_all_analysis.json; EXP=Exp7 for Exp7/)
 import glob
 import itertools
 import json
@@ -14,7 +14,8 @@ import torch
 from cifar10_ensemble_eval import load_net, run_setting, build_loader, predict
 
 ROOT = os.path.abspath('..')
-BASE = os.path.join(ROOT, 'Exp6/evo_zero')
+EXP = os.environ.get('EXP', 'Exp6')  # Exp6: ImageNet-style retraining recipe, Exp7: CIFAR-standard recipe
+BASE = os.path.join(ROOT, EXP, 'evo_zero')
 device = torch.device('cuda:0')
 
 
@@ -130,6 +131,12 @@ for split in ['valid', 'test']:
         r['seed_ndis_' + name] = v
         print('  seed pairs %-12s ndis %.3f +- %.3f (%d pairs), single %s' % (
             name, np.mean(v), np.std(v), len(v), ' '.join('%.2f' % acc[d] for d in s)))
+    # reliability of the single-model accuracy: share of the across-arch variance not explained by seed noise
+    # (seed variance from the 4 seeds of 84.6M); sqrt(reliability) bounds the rank correlation any predictor can reach
+    va, vs = np.var(real, ddof=1), np.var([acc[d] for d in seed_sets['large_84.6M']], ddof=1)
+    r['reliability'] = max(0.0, 1 - vs / va)
+    print('  single acc std: archs %.2f, seeds of 84.6M %.2f -> reliability %.2f (max attainable corr %.2f)' % (
+        np.sqrt(va), np.sqrt(vs), r['reliability'], np.sqrt(r['reliability'])))
     sm = [i for i in range(len(dirs)) if flops[i] < 42]
     v = [ndis(dirs[i], dirs[j]) for i, j in itertools.combinations(sm, 2)]
     print('  distinct small archs (< 42M, %d): ndis %.3f +- %.3f' % (len(sm), np.mean(v), np.std(v)))
@@ -154,5 +161,5 @@ for split in ['valid', 'test']:
     r['ens5_fairnas_pareto'] = ens(pdirs)
     print('  K=5 FairNAS output pareto/ (%.0fM): acc %.2f NLL %.4f' % ((pf,) + r['ens5_fairnas_pareto']))
     out[split] = r
-json.dump(out, open(os.path.join(ROOT, 'Exp6/zero_all_analysis.json'), 'w'), indent=1)
-print('Saved to Exp6/zero_all_analysis.json')
+json.dump(out, open(os.path.join(ROOT, EXP, 'zero_all_analysis.json'), 'w'), indent=1)
+print('Saved to %s/zero_all_analysis.json' % EXP)

@@ -3,7 +3,7 @@
 # (2) do they give more diversity than seeds (disagreement, ensemble acc / NLL)?
 # (3) does the supernet accuracy rank the retrained accuracy (16 archs incl. 4 lower-ranked ones)?
 # (4) do the Hamming distance / pool similarity S predict the pairwise diversity (66 pairs of 12 top archs)?
-# usage: cd search && uv run python cifar100_pilot2_analysis.py  (writes Exp6/pilot2_analysis.json)
+# usage: cd search && uv run python cifar100_pilot2_analysis.py  (writes Exp6/pilot2_analysis.json; EXP=Exp7 for Exp7/)
 import itertools
 import json
 import os
@@ -14,7 +14,8 @@ import torch
 from cifar10_ensemble_eval import load_net, run_setting, build_loader, predict
 
 ROOT = os.path.abspath('..')
-BASE = os.path.join(ROOT, 'Exp6/evo_zero')
+EXP = os.environ.get('EXP', 'Exp6')  # Exp6: ImageNet-style retraining recipe, Exp7: CIFAR-standard recipe
+BASE = os.path.join(ROOT, EXP, 'evo_zero')
 device = torch.device('cuda:0')
 
 
@@ -120,5 +121,5 @@ for split in ['valid', 'test']:
     r['ens6_even6'] = ens([d for d, _ in even])
     print('  K=6 near_front acc %.2f NLL %.4f | K=6 even6 acc %.2f NLL %.4f' % (r['ens6_near_front'] + r['ens6_even6']))
     out[split] = r
-json.dump(out, open(os.path.join(ROOT, 'Exp6/pilot2_analysis.json'), 'w'), indent=1)
-print('Saved to Exp6/pilot2_analysis.json')
+json.dump(out, open(os.path.join(ROOT, EXP, 'pilot2_analysis.json'), 'w'), indent=1)
+print('Saved to %s/pilot2_analysis.json' % EXP)
